@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse
 
 from backend.api.websocket import book_websocket_handler
 from backend.api.session import session_manager
-from backend.api.invites_db import init_db as _init_invites_db, verify_invite, mark_used
+from backend.api.invites_db import verify_invite, mark_used
 
 # ── Rate limiter in-memory para /api/verify-invite ───────────────────────────
 _invite_attempts: dict[str, list[float]] = defaultdict(list)
@@ -110,10 +110,9 @@ def create_app() -> FastAPI:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
-    # -- Background session cleanup + inicializar DB de invitaciones -----------
+    # -- Background session cleanup --------------------------------------------
     @app.on_event("startup")
     async def start_cleanup():
-        _init_invites_db()
         asyncio.create_task(_session_cleanup_loop(), name="session-cleanup")
         # En Windows, el ProactorEventLoop lanza WinError 10013 al hacer shutdown()
         # de sockets ya cerrados. Interceptar aqui para que no propague ni mate
