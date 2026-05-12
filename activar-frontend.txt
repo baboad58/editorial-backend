@@ -1,0 +1,17 @@
+
+  Terminal 1 — Backend:
+  cd C:\ProyectosClaude\Editorial\ClaudeCode\book-factory
+  venv\Scripts\activate
+  uvicorn backend.main_api:app --port 8000 --ws-ping-interval 0
+
+  Terminal 2 — Frontend:
+  cd C:\ProyectosClaude\Editorial\ClaudeCode\book-factory\frontend
+  npm run dev
+
+  Luego abres http://localhost:5173 en el navegador.
+
+
+para retomar sesión 5/4  usar
+Terminal 3
+cd C:\Users\cmach\OneDrive\Escritorio\Editorial\ClaudeCode\book-factory
+claude --resume 089d3533-15da-4324-bf02-db5c8054a41c
