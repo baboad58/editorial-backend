@@ -278,14 +278,6 @@ def create_app() -> FastAPI:
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
 
-    @app.get("/api/validate-ideogram")
-    async def validate_ideogram():
-        """Test the Ideogram API key with a minimal request."""
-        import asyncio
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _test_ideogram_key)
-        return result
-
     @app.post("/api/regenerate-images/{session_id}")
     async def regenerate_images(session_id: str):
         """Re-generate all images (cover + chapters) for a completed book and re-assemble the docx."""
@@ -313,37 +305,6 @@ def create_app() -> FastAPI:
     return app
 
 
-def _test_ideogram_key() -> dict:
-    """Makes a minimal Ideogram API call to validate the key and API status."""
-    import requests as _req
-    import backend.tools.cover_generator as _cg
-    api_key = os.getenv("IDEOGRAM_API_KEY", "")
-    if not api_key or api_key.startswith("tvly-placeholder"):
-        return {"valid": False, "status": "no_key", "message": "IDEOGRAM_API_KEY no configurada"}
-
-    try:
-        _cg._rate_limit_wait()
-        resp = _req.post(
-            "https://api.ideogram.ai/v1/ideogram-v2/generate",
-            headers={"Api-Key": api_key, "Content-Type": "application/json"},
-            json={"prompt": "a blue circle", "aspect_ratio": "ASPECT_1_1", "style_type": "GENERAL", "expand_prompt": False},
-            timeout=30,
-        )
-        import time as _t; _cg._last_ideogram_call = _t.time()
-        if resp.status_code == 200:
-            return {"valid": True, "status": "ok", "message": "API key valida y API funcionando correctamente"}
-        if resp.status_code in (401, 403):
-            return {"valid": False, "status": "invalid_key", "message": f"API key invalida o sin permisos ({resp.status_code})"}
-        if resp.status_code == 429:
-            return {"valid": True, "status": "rate_limited", "message": "API key valida pero limite de requests alcanzado (429)"}
-        if resp.status_code == 402:
-            return {"valid": True, "status": "no_credits", "message": "API key valida pero sin creditos (402)"}
-        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"raw": resp.text[:200]}
-        return {"valid": None, "status": f"http_{resp.status_code}", "message": f"Respuesta inesperada ({resp.status_code}): {body}"}
-    except Exception as e:
-        return {"valid": None, "status": "error", "message": f"Error de red: {e}"}
-
-
 def _do_regenerate_images(session_id: str, output_root: Path) -> dict:
     """
     Runs in a thread executor.
@@ -354,7 +315,7 @@ def _do_regenerate_images(session_id: str, output_root: Path) -> dict:
     from backend.graph.builder import build_graph
     from backend.graph.utils import parse_formatted_text
     from backend.tools.documents import create_chapter_docx, assemble_final_book
-    from backend.tools.cover_generator import generate_cover_with_ideogram
+    from backend.tools.cover_generator import generate_cover
 
     db_path = os.getenv("CHECKPOINT_DB", "output/checkpoints.db")
     if not Path(db_path).exists():
@@ -405,7 +366,7 @@ def _do_regenerate_images(session_id: str, output_root: Path) -> dict:
         regen_chapters.append({**ch, "docx_path": docx_path})
 
     # Regenerar portada
-    cover_path, _ = generate_cover_with_ideogram(
+    cover_path, _ = generate_cover(
         title=title,
         subtitle=v.get("subtitle", ""),
         author_name=v.get("author_name", ""),

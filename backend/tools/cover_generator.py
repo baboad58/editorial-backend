@@ -1,29 +1,19 @@
 """
-Cover generation tool  v3.0
-Primario: Google Gemini Imagen 4 (imagen-4.0-generate-001 / imagen-4.0-fast-generate-001)
-Fallback: Ideogram V2
+Cover generation tool  v4.0
+Generador: Google Gemini Imagen 4 (imagen-4.0-generate-001 / imagen-4.0-fast-generate-001)
 
-Cambios v3.0:
-  - Gemini como generador primario para portadas e imágenes de capítulo.
-  - _call_gemini_image(): genera imagen con google-genai SDK, guarda PNG localmente.
-  - Ideogram V2 se mantiene como fallback ante fallos de Gemini.
-  - generate_style_reference() usa Gemini cuando está disponible.
-  - GOOGLE_API_KEY en .env activa Gemini; sin ella usa Ideogram V2.
-
-Cambios v2.0:
-  - Logging estándar en vez de print().
-  - Timeout diferenciado: 60s para generación, 30s para descarga.
+Cambios v4.0:
+  - Eliminado Ideogram V2 completamente — Gemini es el único generador.
+  - Requiere GOOGLE_API_KEY en .env.
+  - Sin GOOGLE_API_KEY, las imágenes se omiten graciosamente.
 """
 
 import logging
 import os
 import re
-import time
 import unicodedata
 from datetime import datetime
 from typing import Optional
-
-import requests
 
 logger = logging.getLogger("editorial_system")
 
@@ -89,31 +79,13 @@ def compact_ideogram_prompt(
     return prompt
 
 
-# ── Constantes de APIs ────────────────────────────────────────────────────────
+# ── Modelos Gemini ────────────────────────────────────────────────────────────
 
-IDEOGRAM_V2_API_URL = "https://api.ideogram.ai/generate"
-
-# Modelos Gemini para imágenes
 GEMINI_IMAGE_MODEL_COVER   = "imagen-4.0-generate-001"      # portadas — mejor calidad
 GEMINI_IMAGE_MODEL_CHAPTER = "imagen-4.0-fast-generate-001" # capítulos — más rápido
 
 # Aspect ratios válidos para Gemini Imagen
 _GEMINI_ASPECT_RATIOS = {"1:1", "4:3", "3:4", "16:9", "9:16"}
-
-# Rate limiter para Ideogram V2
-_last_ideogram_call: float = 0.0
-_MIN_REQUEST_INTERVAL = 20.0
-
-
-def _rate_limit_wait() -> None:
-    """Enforce minimum interval between Ideogram API calls."""
-    global _last_ideogram_call
-    elapsed = time.time() - _last_ideogram_call
-    if elapsed < _MIN_REQUEST_INTERVAL and _last_ideogram_call > 0:
-        wait = _MIN_REQUEST_INTERVAL - elapsed
-        logger.info(f"[Cover] Rate limiter: esperando {wait:.1f}s antes de llamar a Ideogram…")
-        time.sleep(wait)
-    _last_ideogram_call = time.time()
 
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
@@ -164,44 +136,6 @@ def _call_gemini_image(
         return False
 
 
-# ── Ideogram V2 ───────────────────────────────────────────────────────────────
-
-def _call_ideogram_v2(
-    headers: dict,
-    prompt: str,
-    aspect_ratio: str,
-    style_type: str,
-    timeout: int = 60,
-) -> requests.Response:
-    """Llama al endpoint de generación de Ideogram V2."""
-    ratio_map = {
-        "1:1": "ASPECT_1_1", "2:3": "ASPECT_2_3", "3:2": "ASPECT_3_2",
-        "1:2": "ASPECT_1_2", "2:1": "ASPECT_2_1", "9:16": "ASPECT_9_16",
-        "16:9": "ASPECT_16_9", "3:4": "ASPECT_3_4", "4:3": "ASPECT_4_3",
-        "1x1": "ASPECT_1_1", "2x3": "ASPECT_2_3", "3x2": "ASPECT_3_2",
-    }
-    style_map = {
-        "GENERAL": "GENERAL", "REALISTIC": "REALISTIC", "DESIGN": "DESIGN",
-        "FICTION": "GENERAL", "STYLIZED": "ANIME", "CUSTOM": "GENERAL", "AUTO": "AUTO",
-    }
-    payload = {
-        "image_request": {
-            "prompt":       prompt,
-            "aspect_ratio": ratio_map.get(aspect_ratio, "ASPECT_1_1"),
-            "model":        "V_2",
-            "style_type":   style_map.get(style_type, "GENERAL"),
-            "magic_prompt_option": "AUTO",
-        }
-    }
-    logger.info(f"[Cover] Usando Ideogram V2 como fallback — aspect={ratio_map.get(aspect_ratio, 'ASPECT_1_1')}")
-    return requests.post(
-        IDEOGRAM_V2_API_URL,
-        headers={**headers, "Content-Type": "application/json"},
-        json=payload,
-        timeout=timeout,
-    )
-
-
 # ── Helpers de estilo ─────────────────────────────────────────────────────────
 
 _CHILDREN_KEYWORDS = {"infantil", "niños", "niñas", "children", "kids", "cuentos", "cuento"}
@@ -215,67 +149,8 @@ def _is_children(genre: str) -> bool:
     return any(k in genre.lower() for k in _CHILDREN_KEYWORDS)
 
 
-def _cover_style(genre: str) -> str:
-    return "DESIGN"
 
 
-def _chapter_style(genre: str) -> str:
-    g = genre.lower()
-    if any(k in g for k in ["infantil", "niños", "niñas", "children", "kids", "cuentos", "cuento", "álbum", "album"]):
-        return "STYLIZED"
-    if any(k in g for k in ["juvenil", "young adult", "ya"]):
-        return "REALISTIC"
-    if any(k in g for k in ["ficción", "ficcion", "fiction", "fantasía", "fantasia", "fantasy", "thriller", "terror", "horror", "romance", "leyenda", "mítica", "mitica"]):
-        return "FICTION"
-    return "GENERAL"
-
-
-def _safe_json(response) -> dict:
-    try:
-        return response.json()
-    except Exception:
-        return {"message": response.text[:200]}
-
-
-# ── Descarga de imágenes ──────────────────────────────────────────────────────
-
-def _download_image(url: str, output_dir: str, title: str) -> Optional[str]:
-    """Descarga la imagen de portada desde la URL y la guarda en output_dir."""
-    os.makedirs(output_dir, exist_ok=True)
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        safe_title = re.sub(r"[^\w\s-]", "", title).strip().replace(" ", "_")[:30]
-        timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename   = f"portada_{safe_title}_{timestamp}.png"
-        filepath   = os.path.join(output_dir, filename)
-        with open(filepath, "wb") as f:
-            f.write(response.content)
-        logger.info(f"[Cover] Imagen de portada guardada: {filepath}")
-        return filepath
-    except requests.exceptions.Timeout:
-        logger.warning("[Cover] Timeout al descargar imagen de portada.")
-        return None
-    except Exception as e:
-        logger.warning(f"[Cover] Error descargando imagen: {e}")
-        return None
-
-
-def _download_chapter_image(url: str, output_dir: str, chapter_index: int, image_index: int) -> Optional[str]:
-    """Descarga la imagen de capítulo y la guarda en output_dir."""
-    os.makedirs(output_dir, exist_ok=True)
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-        filename = f"img_cap{chapter_index:02d}_{image_index:02d}.png"
-        filepath = os.path.join(output_dir, filename)
-        with open(filepath, "wb") as f:
-            f.write(response.content)
-        logger.info(f"[Cover] Imagen de capítulo guardada: {filepath}")
-        return filepath
-    except Exception as e:
-        logger.warning(f"[Cover] Error descargando imagen de capítulo: {e}")
-        return None
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -303,7 +178,7 @@ def _build_cover_prompt(
 ) -> str:
     import re as _re
     match = _re.search(
-        r'\[IDEOGRAM_PROMPT\](.*?)\[/IDEOGRAM_PROMPT\]',
+        r'\[IMAGE_PROMPT\](.*?)\[/IMAGE_PROMPT\]',
         cover_description,
         _re.DOTALL | _re.IGNORECASE,
     )
@@ -321,7 +196,7 @@ def _build_cover_prompt(
         prompt += ideogram_prompt
         return prompt[:1000]
 
-    logger.warning("[Cover] Marcadores [IDEOGRAM_PROMPT] no encontrados — usando fallback.")
+    logger.warning("[Cover] Marcadores [IMAGE_PROMPT] no encontrados — usando fallback.")
     concept_end = len(cover_description)
     for marker in ("PALETA", "TIPOGRAF", "COMPOSICI", "PROMPT PARA", "##", "---"):
         idx = cover_description.upper().find(marker)
@@ -448,7 +323,7 @@ def _build_safe_chapter_prompt(genre: str) -> str:
 
 # ── Funciones públicas ────────────────────────────────────────────────────────
 
-def generate_cover_with_ideogram(
+def generate_cover(
     title: str,
     subtitle: str,
     author_name: str,
@@ -457,62 +332,35 @@ def generate_cover_with_ideogram(
     genre: str = "",
     reference_image_path: str = "",
 ) -> tuple[Optional[str], Optional[str]]:
-    """
-    Genera la portada del libro.
-    Primario: Gemini Imagen 4 (imagen-4.0-generate-001)
-    Fallback:  Ideogram V2
-    """
+    """Genera la portada del libro con Gemini Imagen 4."""
+    google_api_key = os.getenv("GOOGLE_API_KEY", "")
+    if not google_api_key:
+        logger.info("[Cover] GOOGLE_API_KEY no configurada. Omitiendo portada.")
+        return None, None
+
     os.makedirs(output_dir, exist_ok=True)
     prompts_to_try = [
         _build_cover_prompt(title, subtitle, author_name, cover_description, genre),
         _build_safe_cover_prompt(title, subtitle, author_name, genre),
     ]
 
-    # ── Primario: Gemini ─────────────────────────────────────────────────────
-    google_api_key = os.getenv("GOOGLE_API_KEY", "")
-    if google_api_key:
-        for attempt, prompt in enumerate(prompts_to_try, start=1):
-            safe_title = re.sub(r"[^\w\s-]", "", title).strip().replace(" ", "_")[:30]
-            timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename   = f"portada_{safe_title}_{timestamp}.png"
-            filepath   = os.path.join(output_dir, filename)
-            logger.info(f"[Cover] Gemini portada — intento {attempt}")
-            ok = _call_gemini_image(prompt, filepath, aspect_ratio="3:4", model=GEMINI_IMAGE_MODEL_COVER)
-            if ok:
-                return filepath, None
-            if attempt < len(prompts_to_try):
-                logger.info("[Cover] Gemini portada falló — reintentando con prompt simplificado…")
-        logger.warning("[Cover] Gemini portada falló — usando Ideogram V2 como fallback")
-
-    # ── Fallback: Ideogram V2 ────────────────────────────────────────────────
-    ideogram_key = os.getenv("IDEOGRAM_API_KEY", "")
-    if not ideogram_key or ideogram_key.startswith("tvly-placeholder"):
-        logger.info("[Cover] Sin API keys configuradas. Omitiendo generación de portada.")
-        return None, None
-
-    headers = {"Api-Key": ideogram_key}
     for attempt, prompt in enumerate(prompts_to_try, start=1):
-        try:
-            _rate_limit_wait()
-            resp = _call_ideogram_v2(headers, prompt, aspect_ratio="2x3", style_type=_cover_style(genre))
-            if resp.status_code >= 400:
-                body = _safe_json(resp)
-                logger.warning(f"[Cover] Ideogram V2 portada {resp.status_code} (intento {attempt}): {body}")
-                if attempt < len(prompts_to_try):
-                    logger.info("[Cover] Reintentando portada con prompt simplificado…")
-                    continue
-                return None, f"⚠️ Ideogram V2 rechazó portada ({resp.status_code})"
-            images = resp.json().get("data", [])
-            if not images:
-                return None, "⚠️ Ideogram V2 no devolvió imágenes."
-            image_url = images[0].get("url", "")
-            downloaded = _download_image(image_url, output_dir, title)
-            return downloaded, None if downloaded else "⚠️ No se pudo descargar la portada."
-        except Exception as e:
-            logger.warning(f"[Cover] Ideogram V2 portada error: {e}")
-            return None, f"⚠️ Error en fallback Ideogram V2: {e}"
+        safe_title = re.sub(r"[^\w\s-]", "", title).strip().replace(" ", "_")[:30]
+        timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename   = f"portada_{safe_title}_{timestamp}.png"
+        filepath   = os.path.join(output_dir, filename)
+        logger.info(f"[Cover] Gemini portada — intento {attempt}")
+        if _call_gemini_image(prompt, filepath, aspect_ratio="3:4", model=GEMINI_IMAGE_MODEL_COVER):
+            return filepath, None
+        if attempt < len(prompts_to_try):
+            logger.info("[Cover] Gemini portada falló — reintentando con prompt simplificado…")
 
-    return None, "⚠️ Todos los intentos de generación de portada fallaron."
+    logger.warning("[Cover] Gemini portada falló en todos los intentos.")
+    return None, "⚠️ Gemini no pudo generar la portada."
+
+
+# Alias de compatibilidad para código que aún use el nombre anterior
+generate_cover_with_ideogram = generate_cover
 
 
 def generate_style_reference(
@@ -521,10 +369,11 @@ def generate_style_reference(
     cover_description: str,
     output_dir: str = "output",
 ) -> Optional[str]:
-    """
-    Genera una imagen de referencia de estilo.
-    Primario: Gemini. Fallback: Ideogram V2.
-    """
+    """Genera una imagen de referencia de estilo con Gemini."""
+    google_api_key = os.getenv("GOOGLE_API_KEY", "")
+    if not google_api_key:
+        return None
+
     concept = cover_description.strip()[:400] if cover_description else ""
     if _is_children(genre):
         style_hint = "Colorful children's book illustration style, friendly cartoon, bright pastel colors."
@@ -538,47 +387,13 @@ def generate_style_reference(
         style_hint = "Professional editorial illustration, clean composition, sophisticated style."
 
     prompt = f"Visual style reference for book '{title}'. {style_hint} {concept[:200]}. No text, no titles, pure visual atmosphere."
-    prompt = prompt[:800]
 
     ref_dir = os.path.join(output_dir, "references")
     os.makedirs(ref_dir, exist_ok=True)
     filepath = os.path.join(ref_dir, "style_reference.png")
 
-    # ── Primario: Gemini ─────────────────────────────────────────────────────
-    google_api_key = os.getenv("GOOGLE_API_KEY", "")
-    if google_api_key:
-        ok = _call_gemini_image(prompt, filepath, aspect_ratio="1:1", model=GEMINI_IMAGE_MODEL_CHAPTER)
-        if ok:
-            return filepath
-        logger.warning("[Cover] Gemini referencia de estilo falló — usando Ideogram V2")
-
-    # ── Fallback: Ideogram V2 ────────────────────────────────────────────────
-    ideogram_key = os.getenv("IDEOGRAM_API_KEY", "")
-    if not ideogram_key or ideogram_key.startswith("tvly-placeholder"):
-        return None
-
-    try:
-        _rate_limit_wait()
-        headers = {"Api-Key": ideogram_key}
-        resp = _call_ideogram_v2(headers, prompt, aspect_ratio="1x1", style_type=_chapter_style(genre))
-        if not resp.ok:
-            logger.warning(f"[Cover] Ideogram V2 referencia de estilo falló: {resp.status_code}")
-            return None
-        images = resp.json().get("data", [])
-        if not images:
-            return None
-        image_url = images[0].get("url", "")
-        if not image_url:
-            return None
-        img_response = requests.get(image_url, timeout=30)
-        img_response.raise_for_status()
-        with open(filepath, "wb") as f:
-            f.write(img_response.content)
-        logger.info(f"[Cover] Referencia de estilo (Ideogram V2) guardada: {filepath}")
-        return filepath
-    except Exception as e:
-        logger.warning(f"[Cover] Error generando referencia de estilo: {e}")
-        return None
+    ok = _call_gemini_image(prompt[:800], filepath, aspect_ratio="1:1", model=GEMINI_IMAGE_MODEL_CHAPTER)
+    return filepath if ok else None
 
 
 def generate_chapter_image(
@@ -599,9 +414,7 @@ def generate_chapter_image(
     Fallback:  Ideogram V2
     """
     google_api_key = os.getenv("GOOGLE_API_KEY", "")
-    ideogram_key   = os.getenv("IDEOGRAM_API_KEY", "")
-
-    if not google_api_key and (not ideogram_key or ideogram_key.startswith("tvly-placeholder")):
+    if not google_api_key:
         return None, None
 
     concept = description.strip()
@@ -627,47 +440,13 @@ def generate_chapter_image(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # ── Primario: Gemini ─────────────────────────────────────────────────────
-    if google_api_key:
-        for attempt, prompt in enumerate(prompts_to_try, start=1):
-            filepath = os.path.join(output_dir, f"img_cap{chapter_index:02d}_{image_index:02d}.png")
-            logger.info(f"[Cover] Gemini cap{chapter_index}.{image_index} — intento {attempt}")
-            ok = _call_gemini_image(prompt, filepath, aspect_ratio="1:1", model=GEMINI_IMAGE_MODEL_CHAPTER)
-            if ok:
-                return filepath, None
-            if attempt < len(prompts_to_try):
-                logger.info("[Cover] Gemini capítulo falló — reintentando con prompt simplificado…")
-        logger.warning(f"[Cover] Gemini cap{chapter_index}.{image_index} falló — usando Ideogram V2")
-
-    # ── Fallback: Ideogram V2 ────────────────────────────────────────────────
-    if not ideogram_key or ideogram_key.startswith("tvly-placeholder"):
-        return None, "⚠️ Gemini falló y no hay API key de Ideogram configurada."
-
-    headers = {"Api-Key": ideogram_key}
     for attempt, prompt in enumerate(prompts_to_try, start=1):
-        try:
-            _rate_limit_wait()
-            resp = _call_ideogram_v2(headers, prompt, aspect_ratio="1x1", style_type=_chapter_style(genre))
-            if resp.status_code >= 400:
-                body = _safe_json(resp)
-                logger.warning(
-                    f"[Cover] Ideogram V2 cap{chapter_index}.{image_index} {resp.status_code} "
-                    f"(intento {attempt}): {body}"
-                )
-                if attempt < len(prompts_to_try):
-                    logger.info("[Cover] Reintentando capítulo con prompt simplificado…")
-                    continue
-                return None, f"⚠️ Ideogram V2 rechazó imagen de capítulo ({resp.status_code})"
-            images = resp.json().get("data", [])
-            if not images:
-                return None, "⚠️ Ideogram V2 no devolvió imagen para capítulo."
-            image_url = images[0].get("url", "")
-            if not image_url:
-                return None, "⚠️ Ideogram V2 no incluyó URL de imagen."
-            downloaded = _download_chapter_image(image_url, output_dir, chapter_index, image_index)
-            return downloaded, None if downloaded else "⚠️ No se pudo descargar imagen de capítulo."
-        except Exception as e:
-            logger.warning(f"[Cover] Ideogram V2 cap{chapter_index}.{image_index} error: {e}")
-            return None, f"⚠️ Error en fallback Ideogram V2: {e}"
+        filepath = os.path.join(output_dir, f"img_cap{chapter_index:02d}_{image_index:02d}.png")
+        logger.info(f"[Cover] Gemini cap{chapter_index}.{image_index} — intento {attempt}")
+        if _call_gemini_image(prompt, filepath, aspect_ratio="1:1", model=GEMINI_IMAGE_MODEL_CHAPTER):
+            return filepath, None
+        if attempt < len(prompts_to_try):
+            logger.info("[Cover] Gemini capítulo falló — reintentando con prompt simplificado…")
 
-    return None, "⚠️ Todos los intentos de imagen de capítulo fallaron."
+    logger.warning(f"[Cover] Gemini cap{chapter_index}.{image_index} falló en todos los intentos.")
+    return None, "⚠️ Gemini no pudo generar la imagen del capítulo."

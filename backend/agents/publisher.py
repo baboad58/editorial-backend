@@ -26,7 +26,7 @@ from langgraph.types import interrupt  # conservado para compatibilidad futura
 
 from backend.graph.state import BookState
 from backend.tools.documents import assemble_final_book
-from backend.tools.cover_generator import generate_cover_with_ideogram, generate_style_reference
+from backend.tools.cover_generator import generate_cover, generate_style_reference
 from backend.graph.utils import (
     retry_llm_call,
     retry_llm_call_json,
@@ -210,7 +210,7 @@ El prompt para Ideogram DEBE seguir estas reglas de estilo sin excepción:
 - Prohibido: sombras dramáticas, perspectivas complejas, texturas fotorrealistas,
   elementos de terror, violencia, o contenido adulto de cualquier tipo.
 - Referentes visuales: Patito Feo ilustrado, Elmer el elefante, cuentos de Roald Dahl ilustrados."""
-        ideogram_instruction = (
+        image_instruction = (
             "prompt en inglés, 80-120 palabras, OBLIGATORIAMENTE en estilo gouache o acuarela digital infantil. "
             "Incluir: VIVID SATURATED COLORS (deep red, sunny yellow, electric blue, lush green), "
             "friendly rounded characters with large expressive eyes, bold outlines, "
@@ -227,7 +227,7 @@ El prompt para Ideogram DEBE seguir estas reglas de estilo:
 - Personajes: jóvenes (10-17 años), expresivos, dinámicos.
 - Composición: dramática, con profundidad. El personaje principal domina la portada.
 - Prohibido: contenido adulto, violencia explícita, imágenes aterradoras."""
-        ideogram_instruction = (
+        image_instruction = (
             "prompt en inglés, 80-120 palabras, estilo ilustración digital para jóvenes. "
             "Incluir: personaje joven expresivo, composición dinámica, colores vibrantes, "
             "atmósfera acorde al tono del libro. "
@@ -236,7 +236,7 @@ El prompt para Ideogram DEBE seguir estas reglas de estilo:
         )
     else:
         style_guide = ""
-        ideogram_instruction = (
+        image_instruction = (
             "prompt en inglés, 80-120 palabras, optimizado para IA generativa de imágenes. "
             "Incluir: estilo visual, composición, colores, atmósfera, personajes/elementos. "
             'Terminar siempre con: "Book cover design, professional publishing quality, portrait 2:3 format"'
@@ -270,11 +270,11 @@ COMPOSICIÓN:
 ## PARTE 2 — PROMPT PARA IDEOGRAM (OBLIGATORIO)
 Al final del brief, escribe EXACTAMENTE este bloque con los marcadores:
 
-[IDEOGRAM_PROMPT]
-({ideogram_instruction})
-[/IDEOGRAM_PROMPT]
+[IMAGE_PROMPT]
+({image_instruction})
+[/IMAGE_PROMPT]
 
-IMPORTANTE: Los marcadores [IDEOGRAM_PROMPT] y [/IDEOGRAM_PROMPT] son obligatorios.
+IMPORTANTE: Los marcadores [IMAGE_PROMPT] y [/IMAGE_PROMPT] son obligatorios.
 Esta descripción se guardará como brief para el diseñador. NO es parte del libro."""
 
 
@@ -656,7 +656,7 @@ def publisher_node(state: BookState) -> dict:
     cover_image_path = None
     cover_warning = None
     try:
-        cover_image_path, cover_warning = generate_cover_with_ideogram(
+        cover_image_path, cover_warning = generate_cover(
             title=title,
             subtitle=subtitle,
             author_name=author_name,
