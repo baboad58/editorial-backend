@@ -1,99 +1,86 @@
 """
-Gestión de códigos de invitación via Supabase REST API (PostgREST).
-Usa httpx directamente — sin SDK de supabase-py para evitar dependencias de pyiceberg en Windows.
+Gestión de códigos de invitación en SQLite local.
 
-Tabla requerida en Supabase (ejecutar en SQL Editor):
-─────────────────────────────────────────────────────
-CREATE TABLE invitation_codes (
-    id         BIGSERIAL PRIMARY KEY,
-    code       TEXT NOT NULL,
-    email      TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'sent',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    used_at    TIMESTAMPTZ,
-    UNIQUE(code, email)
-);
+Tabla invitation_codes:
+  code    — código enviado al usuario (ej. OBRA-BETA-001)
+  email   — email al que fue enviado
+  status  — 'sent' (válido) | 'used' (consumido)
 
--- Solo el backend (service role) puede modificar la tabla
-ALTER TABLE invitation_codes ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "service_only" ON invitation_codes USING (false);
-─────────────────────────────────────────────────────
-
-Variables de entorno requeridas:
-  SUPABASE_URL         — https://xxxx.supabase.co
-  SUPABASE_SERVICE_KEY — service role key (nunca el anon key en el backend)
+El acceso se permite solo con status='sent' y la pareja correcta email+código.
+La DB se crea automáticamente al arrancar el backend.
 """
 
+import sqlite3
 import os
 import logging
-from datetime import datetime, timezone
-
-import httpx
+from contextlib import contextmanager
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_TABLE = "invitation_codes"
+INVITES_DB = os.getenv("INVITES_DB", "invites.db")
 
 
-def _headers() -> dict:
-    key = os.getenv("SUPABASE_SERVICE_KEY", "")
-    return {
-        "apikey":        key,
-        "Authorization": f"Bearer {key}",
-        "Content-Type":  "application/json",
-        "Prefer":        "return=representation",
-    }
+@contextmanager
+def _conn():
+    con = sqlite3.connect(INVITES_DB, timeout=10)
+    con.row_factory = sqlite3.Row
+    try:
+        yield con
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
 
 
-def _base_url() -> str:
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not url:
-        raise RuntimeError("SUPABASE_URL es obligatoria. Agrégala al archivo .env")
-    if not os.getenv("SUPABASE_SERVICE_KEY"):
-        raise RuntimeError("SUPABASE_SERVICE_KEY es obligatoria. Agrégala al archivo .env")
-    return f"{url}/rest/v1/{_TABLE}"
+def init_db() -> None:
+    """Crea la tabla si no existe. Se llama automáticamente al arrancar el servidor."""
+    with _conn() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS invitation_codes (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                code       TEXT NOT NULL,
+                email      TEXT NOT NULL,
+                status     TEXT NOT NULL DEFAULT 'sent',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                used_at    DATETIME,
+                UNIQUE(code, email)
+            )
+        """)
+    logger.info(f"[Invites] DB lista: {INVITES_DB}")
 
 
 def verify_invite(code: str, email: str) -> bool:
     """True si el par code+email existe con status='sent'."""
     code  = code.strip().upper()
     email = email.strip().lower()
-    try:
-        res = httpx.get(
-            _base_url(),
-            headers=_headers(),
-            params={"code": f"eq.{code}", "email": f"eq.{email}", "select": "status"},
-            timeout=10,
-        )
-        res.raise_for_status()
-        rows = res.json()
-        return bool(rows) and rows[0].get("status") == "sent"
-    except Exception:
-        logger.exception("[Invites] Error al verificar código")
+    with _conn() as con:
+        row = con.execute(
+            "SELECT status FROM invitation_codes WHERE code = ? AND email = ?",
+            (code, email),
+        ).fetchone()
+    if row is None:
         return False
+    return row["status"] == "sent"
 
 
 def mark_used(code: str, email: str) -> bool:
     """Marca el código como 'used'. Idempotente — safe llamar múltiples veces."""
     code  = code.strip().upper()
     email = email.strip().lower()
-    try:
-        now = datetime.now(timezone.utc).isoformat()
-        res = httpx.patch(
-            _base_url(),
-            headers=_headers(),
-            params={"code": f"eq.{code}", "email": f"eq.{email}", "status": "eq.sent"},
-            json={"status": "used", "used_at": now},
-            timeout=10,
+    with _conn() as con:
+        cursor = con.execute(
+            """UPDATE invitation_codes
+               SET status = 'used', used_at = CURRENT_TIMESTAMP
+               WHERE code = ? AND email = ? AND status = 'sent'""",
+            (code, email),
         )
-        res.raise_for_status()
-        updated = len(res.json() or []) > 0
-        if updated:
-            logger.info(f"[Invites] Código marcado como usado: {code} / {email}")
-        return updated
-    except Exception:
-        logger.exception("[Invites] Error al marcar código como usado")
-        return False
+    updated = cursor.rowcount > 0
+    if updated:
+        logger.info(f"[Invites] Código marcado como usado: {code} / {email}")
+    return updated
 
 
 def create_invite(code: str, email: str) -> bool:
@@ -101,57 +88,36 @@ def create_invite(code: str, email: str) -> bool:
     code  = code.strip().upper()
     email = email.strip().lower()
     try:
-        res = httpx.post(
-            _base_url(),
-            headers=_headers(),
-            json={"code": code, "email": email, "status": "sent"},
-            timeout=10,
-        )
-        if res.status_code == 409:   # UNIQUE constraint violation
-            return False
-        res.raise_for_status()
+        with _conn() as con:
+            con.execute(
+                "INSERT INTO invitation_codes (code, email, status) VALUES (?, ?, 'sent')",
+                (code, email),
+            )
         logger.info(f"[Invites] Código creado: {code} → {email}")
         return True
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 409:
-            return False
-        logger.exception("[Invites] Error al crear código")
-        raise
+    except sqlite3.IntegrityError:
+        return False
 
 
 def list_invites() -> list[dict]:
-    """Devuelve todos los códigos de invitación, ordenados por fecha desc."""
-    try:
-        res = httpx.get(
-            _base_url(),
-            headers=_headers(),
-            params={"select": "code,email,status,created_at,used_at", "order": "created_at.desc"},
-            timeout=10,
-        )
-        res.raise_for_status()
-        return res.json() or []
-    except Exception:
-        logger.exception("[Invites] Error al listar códigos")
-        return []
+    """Devuelve todos los códigos de invitación."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT code, email, status, created_at, used_at FROM invitation_codes ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def reset_invite(code: str, email: str) -> bool:
     """Resetea un código a 'sent'. Permite reutilizar un código consumido."""
     code  = code.strip().upper()
     email = email.strip().lower()
-    try:
-        res = httpx.patch(
-            _base_url(),
-            headers=_headers(),
-            params={"code": f"eq.{code}", "email": f"eq.{email}"},
-            json={"status": "sent", "used_at": None},
-            timeout=10,
+    with _conn() as con:
+        cursor = con.execute(
+            "UPDATE invitation_codes SET status = 'sent', used_at = NULL WHERE code = ? AND email = ?",
+            (code, email),
         )
-        res.raise_for_status()
-        updated = len(res.json() or []) > 0
-        if updated:
-            logger.info(f"[Invites] Código reseteado: {code} / {email}")
-        return updated
-    except Exception:
-        logger.exception("[Invites] Error al resetear código")
-        return False
+    updated = cursor.rowcount > 0
+    if updated:
+        logger.info(f"[Invites] Código reseteado: {code} / {email}")
+    return updated
