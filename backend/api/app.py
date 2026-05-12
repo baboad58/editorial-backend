@@ -5,10 +5,13 @@ Mounts the WebSocket endpoint and REST endpoints for health/session info.
 
 import asyncio
 import os
+import time
 import uuid
+from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, WebSocket, UploadFile, File, HTTPException
+from fastapi import FastAPI, WebSocket, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -16,12 +19,69 @@ from fastapi.responses import FileResponse
 from backend.api.websocket import book_websocket_handler
 from backend.api.session import session_manager
 
+# ── Códigos de invitación válidos (backend-side, nunca en el bundle JS) ─────
+_INVITE_CODES: set[str] = set(
+    filter(None, os.getenv(
+        "INVITE_CODES",
+        "OBRA-ALPHA-001,OBRA-ALPHA-002,OBRA-ALPHA-003,OBRA-ALPHA-004,OBRA-ALPHA-005,"
+        "OBRA-ALPHA-006,OBRA-ALPHA-007,OBRA-ALPHA-008,OBRA-ALPHA-009,OBRA-ALPHA-010",
+    ).upper().split(","))
+)
+
+# ── Rate limiter in-memory para /api/verify-invite ───────────────────────────
+_invite_attempts: dict[str, list[float]] = defaultdict(list)
+_WS_connections:  dict[str, list[float]] = defaultdict(list)
+_MAX_INVITE_ATTEMPTS = 5          # intentos por IP por ventana
+_INVITE_WINDOW     = 3600.0       # 1 hora
+_MAX_WS_PER_MIN    = 10           # conexiones WS por IP por minuto
+
+def _rate_limit_invite(ip: str) -> bool:
+    """Devuelve True si la IP puede intentar; False si superó el límite."""
+    now = time.time()
+    _invite_attempts[ip] = [t for t in _invite_attempts[ip] if now - t < _INVITE_WINDOW]
+    if len(_invite_attempts[ip]) >= _MAX_INVITE_ATTEMPTS:
+        return False
+    _invite_attempts[ip].append(now)
+    return True
+
+def _rate_limit_ws(ip: str) -> bool:
+    """Devuelve True si la IP puede abrir nueva conexión WS; False si superó el límite."""
+    now = time.time()
+    _WS_connections[ip] = [t for t in _WS_connections[ip] if now - t < 60.0]
+    if len(_WS_connections[ip]) >= _MAX_WS_PER_MIN:
+        return False
+    _WS_connections[ip].append(now)
+    return True
+
+
+_OUTPUT_RETENTION_DAYS = int(os.getenv("OUTPUT_RETENTION_DAYS", "30"))
 
 async def _session_cleanup_loop() -> None:
-    """Background task: purge sessions idle longer than SESSION_TIMEOUT_SECONDS."""
+    """Background task: purge sessions idle longer than SESSION_TIMEOUT_SECONDS
+    y elimina checkpoints/outputs con más de OUTPUT_RETENTION_DAYS días."""
     while True:
-        await asyncio.sleep(60)   # check every minute
+        await asyncio.sleep(60)
         await session_manager.cleanup_expired_sessions()
+        _cleanup_old_outputs()
+
+
+def _cleanup_old_outputs() -> None:
+    """Elimina carpetas de sesiones en output/ con más de OUTPUT_RETENTION_DAYS días."""
+    import logging, shutil
+    logger = logging.getLogger("book-factory.retention")
+    output_root = Path(os.getenv("OUTPUT_DIR", "output"))
+    if not output_root.exists():
+        return
+    cutoff = time.time() - _OUTPUT_RETENTION_DAYS * 86400
+    for session_dir in output_root.iterdir():
+        if not session_dir.is_dir() or session_dir.name in ("references",):
+            continue
+        try:
+            if session_dir.stat().st_mtime < cutoff:
+                shutil.rmtree(session_dir, ignore_errors=True)
+                logger.info(f"[Retention] Sesión eliminada por antigüedad: {session_dir.name}")
+        except Exception:
+            pass
 
 
 def create_app() -> FastAPI:
@@ -46,6 +106,18 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # -- Headers de seguridad HTTP ---------------------------------------------
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next: Any):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
     # -- Background session cleanup --------------------------------------------
     @app.on_event("startup")
     async def start_cleanup():
@@ -68,7 +140,31 @@ def create_app() -> FastAPI:
     # -- WebSocket endpoint ----------------------------------------------------
     @app.websocket("/ws/book")
     async def book_ws(websocket: WebSocket):
+        ip = websocket.client.host if websocket.client else "unknown"
+        if not _rate_limit_ws(ip):
+            await websocket.close(code=1008, reason="Demasiadas conexiones. Intenta en un minuto.")
+            return
         await book_websocket_handler(websocket)
+
+    # -- Verificación de código de invitación (backend-side) ------------------
+    @app.post("/api/verify-invite")
+    async def verify_invite(request: Request):
+        ip = request.client.host if request.client else "unknown"
+        if not _rate_limit_invite(ip):
+            raise HTTPException(
+                status_code=429,
+                detail="Demasiados intentos. Espera una hora antes de volver a intentarlo.",
+            )
+        try:
+            body = await request.json()
+            code = str(body.get("code", "")).strip().upper()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Petición mal formada.")
+        if not code:
+            raise HTTPException(status_code=400, detail="Código requerido.")
+        if code in _INVITE_CODES:
+            return {"valid": True}
+        raise HTTPException(status_code=401, detail="Código no válido.")
 
     # -- REST endpoints --------------------------------------------------------
     @app.get("/health")

@@ -1,20 +1,23 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { grantAccess } from '../lib/invites'
+import { verifyInvite } from '../lib/invites'
 
 export default function AccessGate() {
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
-    const ok = grantAccess(code)
-    if (ok) {
+    setLoading(true)
+    const result = await verifyInvite(code)
+    setLoading(false)
+    if (result.ok) {
       navigate('/studio', { replace: true })
     } else {
-      setError('Código no válido. Revisa que esté escrito correctamente.')
+      setError(result.error)
     }
   }
 
@@ -57,11 +60,12 @@ export default function AccessGate() {
 
           <button
             type="submit"
-            className="w-full bg-gold-500 hover:bg-gold-400 text-[#0a0a0f] px-8 py-4 rounded-full
-                       font-medium tracking-wide shadow-[0_10px_40px_-10px_rgba(212,168,87,0.6)]
-                       transition-all hover:scale-[1.01]"
+            disabled={loading}
+            className="w-full bg-gold-500 hover:bg-gold-400 disabled:opacity-60 disabled:cursor-not-allowed
+                       text-[#0a0a0f] px-8 py-4 rounded-full font-medium tracking-wide
+                       shadow-[0_10px_40px_-10px_rgba(212,168,87,0.6)] transition-all hover:scale-[1.01]"
           >
-            Entrar al estudio →
+            {loading ? 'Verificando…' : 'Entrar al estudio →'}
           </button>
         </form>
 

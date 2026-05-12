@@ -184,6 +184,14 @@ export default function StartScreen({ onStart, phase }) {
           </button>
         </form>
 
+        {/* Aviso de privacidad — Ley 19.628 / Ley 21.719 Chile */}
+        <p className="mt-4 text-[11px] text-gray-600 text-center leading-relaxed px-2">
+          Al crear tu libro aceptas que recopilemos tu nombre, correo y datos de autor para
+          generar la obra. Esta información se procesa mediante IA (Anthropic) y se almacena
+          por un máximo de 30 días. Puedes solicitar su eliminación en cualquier momento.
+          Tratamiento conforme a la Ley 19.628 de Protección de la Vida Privada (Chile).
+        </p>
+
         {/* Biblioteca */}
         <button
           onClick={() => setShowBiblioteca(true)}

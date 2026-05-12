@@ -74,8 +74,8 @@ async def _validate_idea_safety(idea: str) -> tuple[bool, str, str]:
     Retorna (es_seguro, code, mensaje_para_usuario).
       code: "input_too_long" | "unsafe_content"
 
-    Falla abierta: si el validador falla por error técnico, deja pasar
-    y loguea — no bloqueamos al usuario por un problema de red.
+    Falla cerrada: si el validador falla por error técnico, rechaza la solicitud.
+    Es más seguro rechazar por error de red que permitir contenido no validado.
     """
     # Límite de longitud — primera línea de defensa, sin costo de API
     if len(idea) > _MAX_IDEA_CHARS:
@@ -124,11 +124,16 @@ async def _validate_idea_safety(idea: str) -> tuple[bool, str, str]:
             )
         return True, "", ""
     except Exception as e:
-        # Falla abierta: si el validador falla, dejamos pasar y logueamos
+        # Falla cerrada: si el validador falla, rechazamos por seguridad
         logger.warning(
-            f"[Security] Validador semántico falló ({type(e).__name__}) — permitiendo pasar"
+            f"[Security] Validador semántico falló ({type(e).__name__}) — rechazando por seguridad"
         )
-        return True, "", ""
+        return (
+            False,
+            "unsafe_content",
+            "El sistema de validación no está disponible en este momento. "
+            "Por favor intenta de nuevo en unos segundos.",
+        )
 
 
 # Intervalo de latido mientras el LLM trabaja (segundos).
@@ -238,6 +243,18 @@ async def run_book_session(session: BookSession, idea: str, resume: bool = False
     base_output_dir = os.getenv("OUTPUT_DIR", "output")
     output_dir = os.path.join(base_output_dir, session.session_id[:8])
     os.makedirs(output_dir, exist_ok=True)
+
+    # ── Sanitizar reference_image_path contra path traversal ────────────────
+    if reference_image_path:
+        from pathlib import Path as _Path
+        ref_root = _Path(base_output_dir).resolve() / "references"
+        ref_resolved = _Path(reference_image_path).resolve()
+        if not str(ref_resolved).startswith(str(ref_root)):
+            logger.warning(
+                f"[Security] reference_image_path fuera del directorio permitido: "
+                f"{reference_image_path!r} — ignorado"
+            )
+            reference_image_path = ""
 
     # ── Validación de seguridad antes de iniciar el grafo ────────────────
     if not resume and idea:
