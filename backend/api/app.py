@@ -11,7 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, WebSocket, UploadFile, File, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -172,16 +172,21 @@ def create_app() -> FastAPI:
         return {"status": "ok", "service": "book-factory"}
 
     @app.get("/api/output/{filepath:path}")
-    async def download_output(filepath: str):
-        """Download a generated book file (supports session subdirectories)."""
-        from fastapi import HTTPException
+    async def download_output(filepath: str, token: str = Query(default="")):
+        """Download a generated book file. Requires ?token= matching the session token."""
         output_root = Path(os.getenv("OUTPUT_DIR", "output")).resolve()
         full_path = (output_root / filepath).resolve()
-        # Security: prevent path traversal outside output dir
+        # Prevenir path traversal
         if not str(full_path).startswith(str(output_root)):
             raise HTTPException(status_code=400, detail="Ruta invalida")
         if not full_path.exists() or not full_path.is_file():
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
+        # Validar token: el primer componente del path es el prefijo del session_id (8 chars)
+        path_parts = filepath.split("/")
+        if path_parts:
+            output_dir_prefix = path_parts[0]
+            if not session_manager.validate_download_token(token, output_dir_prefix):
+                raise HTTPException(status_code=401, detail="Token de descarga requerido o invalido.")
         return FileResponse(
             path=str(full_path),
             filename=full_path.name,

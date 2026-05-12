@@ -25,6 +25,9 @@ AUTONOMOUS_TIMEOUT_SECONDS = 10800  # 3 horas
 class BookSession:
     session_id: str
     thread_id: str
+    # Token secreto generado al crear la sesión. El cliente debe enviarlo
+    # en cada reconexión para evitar secuestro de sesión.
+    session_token: str = field(default_factory=lambda: uuid.uuid4().hex)
     interrupt_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     response_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     is_active: bool = True
@@ -43,6 +46,9 @@ class SessionManager:
     def __init__(self):
         self._sessions: Dict[str, BookSession] = {}
         self.checkpointer = MemorySaver()
+        # Tokens de sesiones completadas: token -> session_id[:8] (prefijo del output_dir)
+        # Persisten en memoria para autorizar descargas después de que la sesión se elimine.
+        self._download_tokens: Dict[str, str] = {}
 
     def create_session(self, session_id: Optional[str] = None) -> BookSession:
         sid = session_id or str(uuid.uuid4())
@@ -58,6 +64,23 @@ class SessionManager:
 
     def remove_session(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
+
+    def register_download_token(self, session: "BookSession") -> None:
+        """Registra el token de una sesión para autorizar descargas post-completado."""
+        self._download_tokens[session.session_token] = session.session_id
+
+    def validate_download_token(self, token: str, output_dir_prefix: str) -> bool:
+        """True si el token autoriza acceso al directorio output_dir_prefix."""
+        if not token:
+            return False
+        owner_session_id = self._download_tokens.get(token)
+        if owner_session_id is None:
+            # También aceptar token de sesión aún activa
+            for s in self._sessions.values():
+                if s.session_token == token and s.session_id.startswith(output_dir_prefix):
+                    return True
+            return False
+        return owner_session_id.startswith(output_dir_prefix)
 
     def get_langgraph_config(self, session: BookSession) -> dict:
         return {"configurable": {"thread_id": session.thread_id}}

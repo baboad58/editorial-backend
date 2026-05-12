@@ -26,9 +26,11 @@ export class BookSocketClient {
     this.pingInterval = null
     this._idea = null
     this._sessionId = null
+    this._sessionToken = null    // Requerido en reconexiones para validar identidad
+    this._downloadToken = null   // Token de descarga recibido al completar el libro
     this._reconnectAttempts = 0
     this._reconnectTimer = null
-    this._stopped = false       // true when disconnect is intentional or irrecoverable
+    this._stopped = false        // true when disconnect is intentional or irrecoverable
   }
 
   connect() {
@@ -46,12 +48,18 @@ export class BookSocketClient {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data)
-        // Keep client's session_id in sync so reconnects use the right one
+        // Keep client's session_id y session_token en sync para reconexiones
         if (msg.type === 'session_created') {
           this._sessionId = msg.session_id
+          this._sessionToken = msg.session_token || null
         }
-        // Terminal states -> stop auto-reconnect so server close doesn't loop
-        if (msg.type === 'complete' || (msg.type === 'error' && !msg.recoverable)) {
+        // Guardar download_token al completar
+        if (msg.type === 'complete') {
+          this._downloadToken = msg.download_token || null
+          this._stopped = true
+        }
+        // Error irrecuperable -> detener reconexión
+        if (msg.type === 'error' && !msg.recoverable) {
           this._stopped = true
         }
         this.onMessage?.(msg)
@@ -87,11 +95,12 @@ export class BookSocketClient {
     ws.onopen = () => {
       console.log('[ws] Reconexion exitosa')
       this._reconnectAttempts = 0
-      // Resume existing session -- send start directly, do NOT call onConnect
+      // Resume existing session -- send start con session_token para validación
       ws.send(JSON.stringify({
-        type:       'start',
-        idea:       this._idea || '',
-        session_id: this._sessionId,
+        type:          'start',
+        idea:          this._idea || '',
+        session_id:    this._sessionId,
+        session_token: this._sessionToken,
       }))
       this._startPing(ws)
     }
@@ -101,8 +110,13 @@ export class BookSocketClient {
         const msg = JSON.parse(event.data)
         if (msg.type === 'session_created') {
           this._sessionId = msg.session_id
+          this._sessionToken = msg.session_token || null
         }
-        if (msg.type === 'complete' || (msg.type === 'error' && !msg.recoverable)) {
+        if (msg.type === 'complete') {
+          this._downloadToken = msg.download_token || null
+          this._stopped = true
+        }
+        if (msg.type === 'error' && !msg.recoverable) {
           this._stopped = true
         }
         this.onMessage?.(msg)
@@ -147,10 +161,17 @@ export class BookSocketClient {
     return false
   }
 
-  startBook(idea, sessionId = null, referenceImagePath = '') {
+  startBook(idea, sessionId = null, sessionToken = null, referenceImagePath = '') {
     this._idea = idea
     this._sessionId = sessionId
-    return this.send({ type: 'start', idea, session_id: sessionId, reference_image_path: referenceImagePath })
+    this._sessionToken = sessionToken
+    return this.send({
+      type:                 'start',
+      idea,
+      session_id:           sessionId,
+      session_token:        sessionToken,
+      reference_image_path: referenceImagePath,
+    })
   }
 
   resume(response) {

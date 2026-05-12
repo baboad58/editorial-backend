@@ -48,6 +48,7 @@ class BookCompleteMessage(BaseModel):
     download_path: str     # ruta relativa con forward slashes para /api/output/{path}
     output_dir: str
     chapters_count: int
+    download_token: str    # Token requerido en ?token= para autorizar la descarga
 
 
 class ErrorMessage(BaseModel):
@@ -81,3 +82,4 @@ class PongMessage(BaseModel):
 class SessionCreatedMessage(BaseModel):
     type: Literal["session_created"] = "session_created"
     session_id: str
+    session_token: str  # Secreto que el cliente debe enviar en reconexiones

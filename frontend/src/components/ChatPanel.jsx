@@ -281,7 +281,9 @@ function MessageBubble({ msg }) {
 }
 
 function CompletionCard({ result, onReset }) {
-  const downloadUrl = result.download_path ? `/api/output/${result.download_path}` : null
+  const downloadUrl = result.download_path
+    ? `/api/output/${result.download_path}?token=${result.download_token || ''}`
+    : null
   const filename = result.final_path
     ? result.final_path.replace(/\\/g, '/').split('/').pop()
     : 'LIBRO_FINAL.docx'

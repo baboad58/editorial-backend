@@ -37,6 +37,7 @@ export default function StudioApp() {
   const {
     phase,
     sessionId,
+    sessionToken,
     currentInterrupt,
     agentStatus,
     messages,
@@ -114,7 +115,7 @@ export default function StudioApp() {
             <button
               onClick={() => {
                 const saved = JSON.parse(localStorage.getItem('bookSession') || '{}')
-                startSession(saved.idea || '', sessionId)
+                startSession(saved.idea || '', sessionId, sessionToken || saved.sessionToken)
               }}
               className="ml-4 px-3 py-1 rounded-lg bg-yellow-700/40 hover:bg-yellow-600/40 text-yellow-200 text-xs font-medium transition-colors"
             >
@@ -134,7 +135,7 @@ export default function StudioApp() {
                       <button
                         onClick={() => {
                           const saved = JSON.parse(localStorage.getItem('bookSession') || '{}')
-                          startSession(saved.idea || '', sessionId)
+                          startSession(saved.idea || '', sessionId, sessionToken || saved.sessionToken)
                         }}
                         className="px-3 py-1.5 rounded-lg bg-blue-700/40 hover:bg-blue-600/40 text-blue-200 text-xs font-medium transition-colors"
                       >

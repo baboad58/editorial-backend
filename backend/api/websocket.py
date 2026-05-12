@@ -95,6 +95,7 @@ async def book_websocket_handler(websocket: WebSocket) -> None:
 
         idea = msg.get("idea", "").strip()
         existing_session_id = msg.get("session_id")
+        existing_session_token = msg.get("session_token", "")
         reference_image_path = msg.get("reference_image_path", "")
 
         if len(idea) > _MAX_IDEA_CHARS:
@@ -130,6 +131,17 @@ async def book_websocket_handler(websocket: WebSocket) -> None:
         )
 
         if runner_is_alive:
+            # Validar session_token antes de reattach
+            if existing.session_token != existing_session_token:
+                logger.warning(
+                    f"[WS] Intento de reconexion con token invalido para sesion {existing_session_id[:8]}..."
+                )
+                await _send(websocket, ErrorMessage(
+                    message="Token de sesión inválido. La sesión no puede reanudarse.",
+                    recoverable=False,
+                ).model_dump())
+                return
+
             # RECONNECT: reattach to the running session
             session = existing
             session.connected = True
@@ -138,7 +150,10 @@ async def book_websocket_handler(websocket: WebSocket) -> None:
 
             # Indicar al frontend que es reconexion (no resetear estado de UI)
             await _send(websocket, {
-                **SessionCreatedMessage(session_id=session.session_id).model_dump(),
+                **SessionCreatedMessage(
+                    session_id=session.session_id,
+                    session_token=session.session_token,
+                ).model_dump(),
                 "reconnected": True,
             })
 
@@ -164,6 +179,7 @@ async def book_websocket_handler(websocket: WebSocket) -> None:
 
             await _send(websocket, SessionCreatedMessage(
                 session_id=session.session_id,
+                session_token=session.session_token,
             ).model_dump())
 
             graph_task = asyncio.create_task(
@@ -222,12 +238,16 @@ async def book_websocket_handler(websocket: WebSocket) -> None:
                 break
 
             if iv_type == "__complete__":
+                # Registrar token para autorizar la descarga después de que la sesión se elimine
+                if session:
+                    session_manager.register_download_token(session)
                 await _send(websocket, BookCompleteMessage(
                     title=interrupt_value.get("title", ""),
                     final_path=interrupt_value.get("final_path", ""),
                     download_path=interrupt_value.get("download_path", ""),
                     output_dir=interrupt_value.get("output_dir", "output"),
                     chapters_count=interrupt_value.get("chapters_count", 0),
+                    download_token=session.session_token if session else "",
                 ).model_dump())
                 should_cleanup = True
                 break

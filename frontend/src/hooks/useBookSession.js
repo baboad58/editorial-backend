@@ -15,6 +15,7 @@ const LS_KEY = 'bookSession'
 export function useBookSession() {
   const [phase, setPhase]                   = useState('idle')
   const [sessionId, setSessionId]           = useState(null)
+  const [sessionToken, setSessionToken]     = useState(null)
   const [currentInterrupt, setCurrentInterrupt] = useState(null)
   const [agentStatus, setAgentStatus]       = useState(null)
   const [messages, setMessages]             = useState([])
@@ -30,13 +31,13 @@ export function useBookSession() {
     setMessages(prev => [...prev, { ...msg, id: Date.now() + Math.random() }])
   }, [])
 
-  // Persist sessionId to localStorage once received
+  // Persist sessionId + sessionToken to localStorage once received
   useEffect(() => {
-    if (sessionId) {
+    if (sessionId && sessionToken) {
       const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}')
-      localStorage.setItem(LS_KEY, JSON.stringify({ ...saved, sessionId }))
+      localStorage.setItem(LS_KEY, JSON.stringify({ ...saved, sessionId, sessionToken }))
     }
-  }, [sessionId])
+  }, [sessionId, sessionToken])
 
   // Clear localStorage when book completes
   useEffect(() => {
@@ -49,6 +50,7 @@ export function useBookSession() {
     switch (msg.type) {
       case 'session_created':
         setSessionId(msg.session_id)
+        setSessionToken(msg.session_token || null)
         setPhase('active')
         setReconnecting(false)
         setErrorMsg(null)
@@ -136,7 +138,7 @@ export function useBookSession() {
     }
   }, [addMessage])
 
-  const startSession = useCallback((idea, existingSessionId = null, referenceImagePath = '') => {
+  const startSession = useCallback((idea, existingSessionId = null, existingSessionToken = null, referenceImagePath = '') => {
     isCompleteRef.current = false
     lastWarningRef.current = ''
     setPhase('connecting')
@@ -163,7 +165,7 @@ export function useBookSession() {
       handleServerMessage,
       // onConnect
       () => {
-        client.startBook(idea, existingSessionId, referenceImagePath)
+        client.startBook(idea, existingSessionId, existingSessionToken, referenceImagePath)
       },
       // onDisconnect -- only called after all retries are exhausted
       () => {
@@ -215,6 +217,7 @@ export function useBookSession() {
     localStorage.removeItem(LS_KEY)
     setPhase('idle')
     setSessionId(null)
+    setSessionToken(null)
     setCurrentInterrupt(null)
     setAgentStatus(null)
     setMessages([])
@@ -252,6 +255,7 @@ export function useBookSession() {
   return {
     phase,
     sessionId,
+    sessionToken,
     currentInterrupt,
     agentStatus,
     messages,
