@@ -18,15 +18,7 @@ from fastapi.responses import FileResponse
 
 from backend.api.websocket import book_websocket_handler
 from backend.api.session import session_manager
-
-# ── Códigos de invitación válidos (backend-side, nunca en el bundle JS) ─────
-_INVITE_CODES: set[str] = set(
-    filter(None, os.getenv(
-        "INVITE_CODES",
-        "OBRA-ALPHA-001,OBRA-ALPHA-002,OBRA-ALPHA-003,OBRA-ALPHA-004,OBRA-ALPHA-005,"
-        "OBRA-ALPHA-006,OBRA-ALPHA-007,OBRA-ALPHA-008,OBRA-ALPHA-009,OBRA-ALPHA-010",
-    ).upper().split(","))
-)
+from backend.api.invites_db import verify_invite, mark_used
 
 # ── Rate limiter in-memory para /api/verify-invite ───────────────────────────
 _invite_attempts: dict[str, list[float]] = defaultdict(list)
@@ -118,7 +110,7 @@ def create_app() -> FastAPI:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
-    # -- Background session cleanup --------------------------------------------
+    # -- Background session cleanup + init Supabase check ----------------------
     @app.on_event("startup")
     async def start_cleanup():
         asyncio.create_task(_session_cleanup_loop(), name="session-cleanup")
@@ -146,9 +138,9 @@ def create_app() -> FastAPI:
             return
         await book_websocket_handler(websocket)
 
-    # -- Verificación de código de invitación (backend-side) ------------------
+    # -- Verificación de código de invitación (Supabase) ----------------------
     @app.post("/api/verify-invite")
-    async def verify_invite(request: Request):
+    async def verify_invite_endpoint(request: Request):
         ip = request.client.host if request.client else "unknown"
         if not _rate_limit_invite(ip):
             raise HTTPException(
@@ -157,14 +149,57 @@ def create_app() -> FastAPI:
             )
         try:
             body = await request.json()
-            code = str(body.get("code", "")).strip().upper()
+            code  = str(body.get("code",  "")).strip().upper()
+            email = str(body.get("email", "")).strip().lower()
         except Exception:
             raise HTTPException(status_code=400, detail="Petición mal formada.")
-        if not code:
-            raise HTTPException(status_code=400, detail="Código requerido.")
-        if code in _INVITE_CODES:
+        if not code or not email:
+            raise HTTPException(status_code=400, detail="Código y email son requeridos.")
+        if verify_invite(code, email):
             return {"valid": True}
-        raise HTTPException(status_code=401, detail="Código no válido.")
+        raise HTTPException(
+            status_code=401,
+            detail="Código o email no válidos, o el código ya fue utilizado.",
+        )
+
+    # -- Marcar invitación como usada (llamado por el frontend) ---------------
+    @app.post("/api/mark-invite-used")
+    async def mark_invite_used(request: Request):
+        """
+        Marca el código como 'used'. Llamado por el frontend en tres casos:
+        - Al completar el libro (book complete)
+        - Al pedir un nuevo libro (reset)
+        - Al cerrar la ventana (beforeunload via sendBeacon)
+        """
+        try:
+            # sendBeacon envía Content-Type: text/plain — intentar ambos
+            ct = request.headers.get("content-type", "")
+            if "json" in ct:
+                body = await request.json()
+            else:
+                raw = await request.body()
+                import json as _json
+                body = _json.loads(raw)
+            code  = str(body.get("code",  "")).strip().upper()
+            email = str(body.get("email", "")).strip().lower()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Petición mal formada.")
+        if not code or not email:
+            raise HTTPException(status_code=400, detail="Código y email son requeridos.")
+        mark_used(code, email)   # idempotente — safe si ya estaba 'used'
+        return {"ok": True}
+
+    # -- Verificar si una sesión WebSocket sigue viva -------------------------
+    @app.get("/api/check-session/{session_id}")
+    async def check_session(session_id: str, token: str = Query(default="")):
+        """
+        El frontend lo usa tras un beforeunload para saber si puede reconectar
+        sin volver a ingresar el código de invitación.
+        """
+        session = session_manager.get_session(session_id)
+        if session and session.session_token == token and session.is_active:
+            return {"alive": True}
+        return {"alive": False}
 
     # -- REST endpoints --------------------------------------------------------
     @app.get("/health")

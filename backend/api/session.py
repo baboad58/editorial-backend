@@ -38,6 +38,9 @@ class BookSession:
     cancel_event: threading.Event = field(default_factory=threading.Event)
     # Nombre del agente activo (para informar al cliente al reconectar)
     current_agent: str = ""
+    # Credenciales de invitación — para marcar como 'used' al completar el libro
+    invite_code:  str = ""
+    invite_email: str = ""
 
 
 class SessionManager:

@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { BookSocketClient } from '../lib/websocket'
+import { getStoredInvite, markInviteUsed, clearStoredInvite } from '../lib/invites'
 
 const LS_KEY = 'bookSession'
 
@@ -161,11 +162,20 @@ export function useBookSession() {
     clientRef.current?.disconnect()
     clientRef.current = null
 
+    const invite = getStoredInvite()
+
     const client = new BookSocketClient(
       handleServerMessage,
       // onConnect
       () => {
-        client.startBook(idea, existingSessionId, existingSessionToken, referenceImagePath)
+        client.startBook(
+          idea,
+          existingSessionId,
+          existingSessionToken,
+          referenceImagePath,
+          invite?.code  || null,
+          invite?.email || null,
+        )
       },
       // onDisconnect -- only called after all retries are exhausted
       () => {
@@ -212,6 +222,9 @@ export function useBookSession() {
   }, [addMessage])
 
   const reset = useCallback(() => {
+    // Marcar invitación como usada antes de limpiar (nuevo libro = código consumido)
+    markInviteUsed(false)
+    clearStoredInvite()
     clientRef.current?.disconnect()
     clientRef.current = null
     localStorage.removeItem(LS_KEY)

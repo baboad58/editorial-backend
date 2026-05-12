@@ -25,9 +25,11 @@ export class BookSocketClient {
     this.ws = null
     this.pingInterval = null
     this._idea = null
-    this._sessionId = null
+    this._sessionId    = null
     this._sessionToken = null    // Requerido en reconexiones para validar identidad
     this._downloadToken = null   // Token de descarga recibido al completar el libro
+    this._inviteCode  = null     // Código de invitación (enviado al iniciar sesión)
+    this._inviteEmail = null     // Email de invitación
     this._reconnectAttempts = 0
     this._reconnectTimer = null
     this._stopped = false        // true when disconnect is intentional or irrecoverable
@@ -161,16 +163,20 @@ export class BookSocketClient {
     return false
   }
 
-  startBook(idea, sessionId = null, sessionToken = null, referenceImagePath = '') {
-    this._idea = idea
-    this._sessionId = sessionId
+  startBook(idea, sessionId = null, sessionToken = null, referenceImagePath = '', inviteCode = null, inviteEmail = null) {
+    this._idea         = idea
+    this._sessionId    = sessionId
     this._sessionToken = sessionToken
+    this._inviteCode   = inviteCode
+    this._inviteEmail  = inviteEmail
     return this.send({
       type:                 'start',
       idea,
       session_id:           sessionId,
       session_token:        sessionToken,
       reference_image_path: referenceImagePath,
+      invite_code:          inviteCode,
+      invite_email:         inviteEmail,
     })
   }
 

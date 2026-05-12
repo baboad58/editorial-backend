@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useBookSession } from '../hooks/useBookSession'
+import { markInviteUsed } from '../lib/invites'
 import AgentSidebar from './AgentSidebar'
 import ChatPanel from './ChatPanel'
 import StartScreen from './StartScreen'
@@ -34,6 +35,7 @@ function useBackendHealth() {
 
 export default function StudioApp() {
   const backendStatus = useBackendHealth()
+  const navigate = useNavigate()
   const {
     phase,
     sessionId,
@@ -48,6 +50,19 @@ export default function StudioApp() {
     sendResponse,
     reset,
   } = useBookSession()
+
+  // Marcar invitación como usada al cerrar/recargar la ventana
+  useEffect(() => {
+    const handleUnload = () => markInviteUsed(true)   // true = sendBeacon
+    window.addEventListener('beforeunload', handleUnload)
+    return () => window.removeEventListener('beforeunload', handleUnload)
+  }, [])
+
+  // Wrapper de reset: marcar invite + redirigir al gate para pedir nuevo código
+  const handleReset = () => {
+    reset()              // internamente llama markInviteUsed + clearStoredInvite
+    navigate('/acceso', { replace: true })
+  }
 
   const showStart = phase === 'idle' || phase === 'error'
   const showRecoverableBanner = phase === 'error_recoverable'
@@ -94,7 +109,7 @@ export default function StudioApp() {
               )}
             </div>
             <button
-              onClick={reset}
+              onClick={handleReset}
               className="text-xs text-gray-600 hover:text-gray-400 transition-colors px-3 py-1 rounded-lg glass glass-hover"
             >
               ✕ Nuevo libro
@@ -143,7 +158,7 @@ export default function StudioApp() {
                       </button>
                     )}
                     <button
-                      onClick={reset}
+                      onClick={handleReset}
                       className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 text-xs font-medium transition-colors"
                     >
                       ✕ Nuevo libro

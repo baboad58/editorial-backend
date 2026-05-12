@@ -21,6 +21,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.api.session import session_manager, BookSession
 from backend.api.graph_runner import run_book_session, _MAX_IDEA_CHARS, _MAX_RESUME_CHARS
+from backend.api.invites_db import mark_used as _mark_invite_used
 from backend.api.models import SecurityRejectedMessage
 from backend.api.models import (
     SessionCreatedMessage,
@@ -94,9 +95,11 @@ async def book_websocket_handler(websocket: WebSocket) -> None:
             return
 
         idea = msg.get("idea", "").strip()
-        existing_session_id = msg.get("session_id")
+        existing_session_id    = msg.get("session_id")
         existing_session_token = msg.get("session_token", "")
-        reference_image_path = msg.get("reference_image_path", "")
+        reference_image_path   = msg.get("reference_image_path", "")
+        invite_code  = msg.get("invite_code",  "").strip().upper()
+        invite_email = msg.get("invite_email", "").strip().lower()
 
         if len(idea) > _MAX_IDEA_CHARS:
             await _send(websocket, SecurityRejectedMessage(
@@ -175,6 +178,8 @@ async def book_websocket_handler(websocket: WebSocket) -> None:
             session = session_manager.create_session(existing_session_id)
             session.connected = True
             session.cancel_event.clear()
+            session.invite_code  = invite_code
+            session.invite_email = invite_email
             logger.info(f"[WS] Nueva sesion {session.session_id[:8]}...")
 
             await _send(websocket, SessionCreatedMessage(
@@ -238,9 +243,11 @@ async def book_websocket_handler(websocket: WebSocket) -> None:
                 break
 
             if iv_type == "__complete__":
-                # Registrar token para autorizar la descarga después de que la sesión se elimine
+                # Registrar token de descarga y marcar invitación como usada
                 if session:
                     session_manager.register_download_token(session)
+                    if session.invite_code and session.invite_email:
+                        _mark_invite_used(session.invite_code, session.invite_email)
                 await _send(websocket, BookCompleteMessage(
                     title=interrupt_value.get("title", ""),
                     final_path=interrupt_value.get("final_path", ""),
