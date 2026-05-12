@@ -26,6 +26,11 @@ Biblioteca/
 .idea/
 *.code-workspace
 
+# Archivos con credenciales locales — NUNCA subir
+environment.txt
+activar\ claude.txt
+*.local.env
+
 # OS
 .DS_Store
 Thumbs.db
