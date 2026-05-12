@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { supabase } from '../integrations/supabase/client'
 import heroImg from '../assets/hero-library.jpg'
 
 const STEPS = [
@@ -189,6 +190,8 @@ function ContactCTA() {
   const [form, setForm] = useState({ name: '', email: '', idea: '' })
   const [errors, setErrors] = useState({})
   const [sent, setSent] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState('')
 
   const validate = () => {
     const e = {}
@@ -201,18 +204,30 @@ function ContactCTA() {
     return e
   }
 
-  const handleSubmit = (ev) => {
+  const handleSubmit = async (ev) => {
     ev.preventDefault()
+    setSubmitError('')
     const e = validate()
     setErrors(e)
     if (Object.keys(e).length) return
 
-    const subject = encodeURIComponent(`Nueva idea de ${form.name.trim()}`)
-    const body = encodeURIComponent(
-      `Nombre: ${form.name.trim()}\nEmail: ${form.email.trim()}\n\nIdea:\n${form.idea.trim()}`
-    )
-    window.location.href = `mailto:hola@obra.editorial?subject=${subject}&body=${body}`
-    setSent(true)
+    setSubmitting(true)
+    try {
+      const { error } = await supabase.functions.invoke('send-contact', {
+        body: {
+          name: form.name.trim(),
+          email: form.email.trim(),
+          idea: form.idea.trim(),
+        },
+      })
+      if (error) throw error
+      setSent(true)
+    } catch (err) {
+      console.error('send-contact failed:', err)
+      setSubmitError('No hemos podido enviar tu mensaje. Inténtalo de nuevo en unos minutos.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -236,7 +251,7 @@ function ContactCTA() {
         {sent ? (
           <div className="text-center border border-gold-500/30 rounded-2xl p-12 bg-gold-500/5">
             <p className="font-serif text-3xl text-gold-400 mb-3">Gracias.</p>
-            <p className="text-stone-400">Hemos abierto tu cliente de correo. Tu idea está a un envío de distancia.</p>
+            <p className="text-stone-400">Hemos recibido tu idea. Te enviaremos tu código de invitación en menos de 24h.</p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -247,8 +262,9 @@ function ContactCTA() {
                   maxLength={100}
                   value={form.name}
                   onChange={e => setForm({ ...form, name: e.target.value })}
+                  disabled={submitting}
                   className="w-full bg-transparent border-0 border-b border-white/20 focus:border-gold-500
-                             outline-none py-3 text-stone-100 placeholder-stone-600 transition-colors"
+                             outline-none py-3 text-stone-100 placeholder-stone-600 transition-colors disabled:opacity-50"
                   placeholder="María García"
                 />
               </Field>
@@ -258,35 +274,43 @@ function ContactCTA() {
                   maxLength={255}
                   value={form.email}
                   onChange={e => setForm({ ...form, email: e.target.value })}
+                  disabled={submitting}
                   className="w-full bg-transparent border-0 border-b border-white/20 focus:border-gold-500
-                             outline-none py-3 text-stone-100 placeholder-stone-600 transition-colors"
+                             outline-none py-3 text-stone-100 placeholder-stone-600 transition-colors disabled:opacity-50"
                   placeholder="maria@ejemplo.com"
                 />
               </Field>
             </div>
 
-            <Field label="Tu idea — cuanto más detalle, mejor" error={errors.idea}>
+            <Field label="¿Cuál es la idea que quieres ver en tu libro?" error={errors.idea}>
               <textarea
                 rows={6}
                 maxLength={4000}
                 value={form.idea}
                 onChange={e => setForm({ ...form, idea: e.target.value })}
+                disabled={submitting}
                 className="w-full bg-transparent border border-white/10 focus:border-gold-500 rounded-xl
-                           outline-none p-4 text-stone-100 placeholder-stone-600 resize-none transition-colors"
+                           outline-none p-4 text-stone-100 placeholder-stone-600 resize-none transition-colors disabled:opacity-50"
                 placeholder="El protagonista es… El libro trata sobre… Quiero que el tono sea…"
               />
               <p className="text-xs text-stone-600 mt-2 text-right">{form.idea.length} / 4000</p>
             </Field>
 
+            {submitError && (
+              <p className="text-sm text-red-400 text-center">{submitError}</p>
+            )}
+
             <div className="pt-4 flex justify-center">
               <button
                 type="submit"
+                disabled={submitting}
                 className="group inline-flex items-center gap-3 bg-gold-500 hover:bg-gold-400
                            text-[#0a0a0f] px-10 py-4 rounded-full font-medium tracking-wide
-                           shadow-[0_10px_40px_-10px_rgba(212,168,87,0.6)] transition-all hover:scale-[1.02]"
+                           shadow-[0_10px_40px_-10px_rgba(212,168,87,0.6)] transition-all hover:scale-[1.02]
+                           disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
               >
-                Enviar mi idea
-                <span className="transition-transform group-hover:translate-x-1">→</span>
+                {submitting ? 'Enviando…' : 'Enviar mi idea'}
+                {!submitting && <span className="transition-transform group-hover:translate-x-1">→</span>}
               </button>
             </div>
           </form>
@@ -309,11 +333,29 @@ function Field({ label, error, children }) {
 /* ───────────────────────── FOOTER ───────────────────────── */
 function Footer() {
   return (
-    <footer className="border-t border-white/5 py-12 px-6 text-center">
-      <p className="font-serif text-2xl mb-3">O<span className="text-gold-500">b</span>ra</p>
-      <p className="text-xs text-stone-600 tracking-wider uppercase">
-        Editorial de obras creadas con IA · {new Date().getFullYear()}
-      </p>
+    <footer className="border-t border-white/5 py-16 px-6">
+      <div className="max-w-3xl mx-auto text-center space-y-6">
+        <p className="font-serif text-2xl">O<span className="text-gold-500">b</span>ra</p>
+
+        <p className="text-sm text-stone-400 leading-relaxed max-w-2xl mx-auto">
+          Todas las obras publicadas por <span className="text-stone-200">Obra</span> son creadas
+          con la asistencia de herramientas de Inteligencia Artificial. Por su naturaleza
+          generativa, estas obras <span className="text-gold-400/90">no están sujetas a derechos
+          de autor</span> y se consideran de dominio público.
+        </p>
+
+        <div className="mx-auto h-px w-16 bg-white/10" />
+
+        <p className="text-xs text-stone-600 tracking-wider uppercase">
+          Editorial de obras creadas con IA · © {new Date().getFullYear()} Obra
+        </p>
+
+        <p className="text-xs text-stone-600">
+          <Link to="/privacidad" className="hover:text-gold-400 transition-colors">Política de Privacidad</Link>
+          <span className="mx-2 text-stone-700">|</span>
+          <Link to="/terminos" className="hover:text-gold-400 transition-colors">Términos de Servicio</Link>
+        </p>
+      </div>
     </footer>
   )
 }

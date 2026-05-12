@@ -13,6 +13,11 @@ export function getStoredInvite() {
   }
 }
 
+/** Compatibilidad con App.jsx — true si hay una invitación verificada en localStorage. */
+export function isAccessGranted() {
+  return getStoredInvite() !== null
+}
+
 export function clearStoredInvite() {
   try { localStorage.removeItem(INVITE_KEY) } catch {}
 }
