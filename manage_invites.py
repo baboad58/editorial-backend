@@ -31,14 +31,15 @@ STATUS_ICON = {"sent": "📨", "used": "✅"}
 
 
 def _headers():
-    key = os.getenv("SUPABASE_SERVICE_KEY", "")
+    key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
     return {"apikey": key, "Authorization": f"Bearer {key}",
             "Content-Type": "application/json", "Prefer": "return=representation"}
 
 def _url():
     base = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not base or not os.getenv("SUPABASE_SERVICE_KEY"):
-        print("✗ Faltan SUPABASE_URL o SUPABASE_SERVICE_KEY en el .env")
+    key  = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
+    if not base or not key:
+        print("✗ Faltan SUPABASE_URL y SUPABASE_SERVICE_KEY (o SUPABASE_KEY) en el .env")
         sys.exit(1)
     return f"{base}/rest/v1/{_TABLE}"
 

@@ -38,36 +38,6 @@ export type Database = {
         }
         Relationships: []
       }
-      invitation_codes: {
-        Row: {
-          code: string
-          created_at: string
-          recipient_email: string | null
-          recipient_name: string | null
-          status: string | null
-          updated_at: string
-          used_at: string | null
-        }
-        Insert: {
-          code: string
-          created_at?: string
-          recipient_email?: string | null
-          recipient_name?: string | null
-          status?: string | null
-          updated_at?: string
-          used_at?: string | null
-        }
-        Update: {
-          code?: string
-          created_at?: string
-          recipient_email?: string | null
-          recipient_name?: string | null
-          status?: string | null
-          updated_at?: string
-          used_at?: string | null
-        }
-        Relationships: []
-      }
     }
     Views: {
       [_ in never]: never

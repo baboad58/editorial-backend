@@ -24,10 +24,16 @@ Variables de entorno requeridas en .env:
 """
 
 import os
+import ssl
 import logging
 from datetime import datetime, timezone
 
 import httpx
+try:
+    import truststore
+    _ssl_ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+except Exception:
+    _ssl_ctx = True   # comportamiento por defecto de httpx
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +41,8 @@ _TABLE = "invitation_codes"
 
 
 def _headers() -> dict:
-    key = os.getenv("SUPABASE_SERVICE_KEY", "")
+    # Acepta SUPABASE_SERVICE_KEY o SUPABASE_KEY (ambos nombres son equivalentes)
+    key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
     return {
         "apikey":        key,
         "Authorization": f"Bearer {key}",
@@ -46,9 +53,10 @@ def _headers() -> dict:
 
 def _url() -> str:
     base = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not base or not os.getenv("SUPABASE_SERVICE_KEY"):
+    key  = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
+    if not base or not key:
         raise RuntimeError(
-            "Faltan variables de entorno: SUPABASE_URL y SUPABASE_SERVICE_KEY. "
+            "Faltan variables de entorno: SUPABASE_URL y SUPABASE_SERVICE_KEY (o SUPABASE_KEY). "
             "Agrégalas al archivo .env"
         )
     return f"{base}/rest/v1/{_TABLE}"
@@ -64,6 +72,7 @@ def verify_invite(code: str, email: str) -> bool:
             headers=_headers(),
             params={"code": f"eq.{code}", "email": f"eq.{email}", "select": "status"},
             timeout=10,
+            verify=_ssl_ctx,
         )
         res.raise_for_status()
         rows = res.json()
@@ -85,6 +94,7 @@ def mark_used(code: str, email: str) -> bool:
             params={"code": f"eq.{code}", "email": f"eq.{email}", "status": "eq.sent"},
             json={"status": "used", "used_at": now},
             timeout=10,
+            verify=_ssl_ctx,
         )
         res.raise_for_status()
         updated = len(res.json() or []) > 0
