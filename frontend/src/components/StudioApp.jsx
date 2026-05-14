@@ -176,7 +176,7 @@ export default function StudioApp() {
             phase={phase}
             onSend={sendResponse}
             result={result}
-            onReset={reset}
+            onReset={handleReset}
           />
         )}
       </main>
