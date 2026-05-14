@@ -303,6 +303,9 @@ async def run_book_session(session: BookSession, idea: str, resume: bool = False
         "visual_context":           "",
         "reference_image_path":     reference_image_path,
         "output_dir":               output_dir,
+        # Formato de salida — se sobreescribe por el Arquitecto en format_selection
+        "output_format":            "docx",
+        "humanize_writing":         False,
     }
 
     _AGENT_LABELS = {

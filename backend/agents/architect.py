@@ -865,7 +865,43 @@ def architect_node(state: BookState) -> dict:
         else:
             review_chapters = False   # auto_mode siempre genera sin interrupts
 
-        return {**approved_state, "review_chapters": review_chapters}
+        # ── 5to interrupt: formato de salida del libro ─────────────────────
+        format_resp = interrupt({
+            "type":  "format_selection",
+            "agent": "Arquitecto",
+            "content": (
+                "¿En qué formato quieres recibir tu libro?\n\n"
+                "• **Word (.docx)** — El más compatible. Puedes editarlo en cualquier "
+                "procesador de texto (Word, LibreOffice, Google Docs).\n"
+                "• **EPUB** — Estándar de ebooks. Compatible con Kindle, Apple Books, "
+                "Kobo y la mayoría de lectores digitales.\n"
+                "• **HTML** — Página web autocontenida. Abre en cualquier navegador, "
+                "imágenes incluidas.\n"
+                "• **Markdown** — Texto plano con formato. Ideal para publicar en "
+                "plataformas como GitHub, Notion o Medium.\n\n"
+                "⚠️ El formato PDF no está disponible directamente. Si lo necesitas, "
+                "abre el Word o HTML en tu navegador y usa Imprimir → Guardar como PDF."
+            ),
+            "hint": "Selecciona el formato en que deseas recibir tu libro.",
+        })
+
+        # Parsear respuesta
+        if isinstance(format_resp, dict):
+            raw_fmt = str(format_resp.get("response", format_resp.get("action", "docx")))
+        else:
+            raw_fmt = str(format_resp)
+
+        raw_fmt = raw_fmt.strip().lower()
+        _fmt_map = {
+            "word": "docx", "docx": "docx", "doc": "docx",
+            "epub": "epub",
+            "html": "html", "web": "html",
+            "markdown": "markdown", "md": "markdown",
+        }
+        output_format = _fmt_map.get(raw_fmt, "docx")
+        logger.info(f"[Arquitecto] Formato de salida seleccionado: {output_format}")
+
+        return {**approved_state, "review_chapters": review_chapters, "output_format": output_format}
 
     # ── action == "reescribir": regenerar plan ─────────────────────────────
     # Acumular este feedback en el historial

@@ -25,7 +25,12 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.types import interrupt  # conservado para compatibilidad futura
 
 from backend.graph.state import BookState
-from backend.tools.documents import assemble_final_book
+from backend.tools.documents import (
+    assemble_final_book,
+    assemble_final_book_markdown,
+    assemble_final_book_html,
+    assemble_final_book_epub,
+)
 from backend.tools.cover_generator import generate_cover, generate_style_reference
 from backend.graph.utils import (
     retry_llm_call,
@@ -673,23 +678,33 @@ def publisher_node(state: BookState) -> dict:
         )
         cover_warning = "⚠️ Error inesperado al generar la portada. El libro se generó sin portada."
 
-    # ── Ensamblar libro final ──────────────────────────────────────────────
-    final_path = assemble_final_book(
+    # ── Ensamblar libro final en el formato elegido por el usuario ────────────
+    output_format = state.get("output_format", "docx")
+    _assemblers = {
+        "docx":     assemble_final_book,
+        "markdown": assemble_final_book_markdown,
+        "html":     assemble_final_book_html,
+        "epub":     assemble_final_book_epub,
+    }
+    _assemble = _assemblers.get(output_format, assemble_final_book)
+    logger.info(f"[Publicador] Ensamblando libro en formato: {output_format}")
+
+    _common_args = dict(
         output_dir=output_dir,
         title=title,
         subtitle=subtitle,
         author_name=author_name,
-        author_bio=sobre_el_autor,    # sección editorial completa, no bio cruda
+        author_bio=sobre_el_autor,
         genre=genre,
         prefacio=prefacio,
         pagina_legal=pagina_legal,
         agradecimientos=agradecimientos,
-        # cover_description NO se pasa — va en brief_portada.txt
         cover_image_path=cover_image_path,
         chapters=approved_chapters,
         reference_image_path=reference_image_path,
         visual_context=state.get("visual_context", ""),
     )
+    final_path = _assemble(**_common_args)
 
     logger.info(f"[Publicador] Libro ensamblado: {final_path}")
 

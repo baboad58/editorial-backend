@@ -77,6 +77,14 @@ function getQuickOptions(interrupt) {
       { label: '⚡ No, generación automática', value: 'no', style: 'blue' },
     ]
   }
+  if (type === 'format_selection') {
+    return [
+      { label: '📄 Word (.docx)', value: 'docx', style: 'blue' },
+      { label: '📚 EPUB', value: 'epub', style: 'green' },
+      { label: '🌐 HTML', value: 'html', style: 'purple' },
+      { label: '📝 Markdown', value: 'markdown', style: 'gray' },
+    ]
+  }
   // Para la entrevista inicial y otros: sin botones, texto libre
   return null
 }

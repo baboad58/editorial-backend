@@ -710,6 +710,331 @@ def assemble_final_book(
     return filepath
 
 
+def _safe_title(title: str) -> str:
+    """Nombre de archivo seguro basado en el título del libro."""
+    return re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')[:40]
+
+
+def assemble_final_book_markdown(
+    output_dir: str,
+    title: str,
+    subtitle: str,
+    author_name: str,
+    author_bio: str,
+    genre: str,
+    prefacio: str,
+    pagina_legal: str,
+    agradecimientos: str,
+    cover_image_path: Optional[str] = None,
+    chapters: List[dict] = None,
+    reference_image_path: str = "",
+    visual_context: str = "",
+) -> str:
+    """Ensambla el libro final en formato Markdown (.md)."""
+    from backend.graph.utils import parse_formatted_text, SubtitleBlock, ImageBlock
+
+    lines: List[str] = []
+
+    # Portada
+    lines += [f"# {title}", ""]
+    if subtitle:
+        lines += [f"*{subtitle}*", ""]
+    lines += [f"**{author_name}**", ""]
+    if cover_image_path and os.path.exists(cover_image_path):
+        lines += [f"![Portada]({os.path.basename(cover_image_path)})", ""]
+
+    # Página legal
+    if pagina_legal:
+        lines += ["---", "", pagina_legal, ""]
+
+    # Prefacio
+    if prefacio:
+        lines += ["---", "", "## Prefacio", "", prefacio, ""]
+
+    # Capítulos
+    for ch in (chapters or []):
+        lines += ["---", "", f"## {ch['title']}", ""]
+        blocks = parse_formatted_text(ch.get("formatted_content", ch.get("content", "")))
+        img_idx = 0
+        for block in blocks:
+            if isinstance(block, SubtitleBlock):
+                lines += [f"### {block.text}", ""]
+            elif isinstance(block, ImageBlock):
+                img_path = os.path.join(output_dir, f"img_cap{ch['index']:02d}_{img_idx:02d}.png")
+                if os.path.exists(img_path):
+                    lines += [f"![{block.description}]({os.path.basename(img_path)})", ""]
+                else:
+                    lines += [f"*[Imagen: {block.description}]*", ""]
+                img_idx += 1
+            else:
+                if block.text.strip():
+                    lines += [block.text.strip(), ""]
+
+    # Sobre el autor
+    if author_bio:
+        lines += ["---", "", "## Sobre el Autor", "", author_bio, ""]
+
+    # Agradecimientos
+    if agradecimientos:
+        lines += ["---", "", "## Agradecimientos", "", agradecimientos, ""]
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    filename = f"LIBRO_FINAL_{_safe_title(title)}_{timestamp}.md"
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return filepath
+
+
+def assemble_final_book_html(
+    output_dir: str,
+    title: str,
+    subtitle: str,
+    author_name: str,
+    author_bio: str,
+    genre: str,
+    prefacio: str,
+    pagina_legal: str,
+    agradecimientos: str,
+    cover_image_path: Optional[str] = None,
+    chapters: List[dict] = None,
+    reference_image_path: str = "",
+    visual_context: str = "",
+) -> str:
+    """Ensambla el libro final en HTML autocontenido con imágenes en base64."""
+    import base64
+    from backend.graph.utils import parse_formatted_text, SubtitleBlock, ImageBlock
+
+    def _img_b64(path: str) -> str:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+
+    def _esc(text: str) -> str:
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    CSS = """
+    body{font-family:Georgia,'Times New Roman',serif;max-width:720px;margin:40px auto;
+         padding:0 24px;color:#1a1a1a;line-height:1.8;font-size:17px;}
+    h1{font-size:2.4em;text-align:center;margin-bottom:4px;}
+    h2{font-size:1.6em;margin-top:3em;border-bottom:1px solid #ccc;padding-bottom:6px;}
+    h3{font-size:1.2em;margin-top:2em;}
+    p{margin:0 0 1em;}
+    .subtitle{text-align:center;font-style:italic;font-size:1.2em;margin-bottom:8px;}
+    .author{text-align:center;font-size:1em;color:#555;margin-bottom:40px;}
+    .cover img{display:block;max-width:400px;margin:20px auto;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.2);}
+    .chapter-img{text-align:center;margin:24px 0;}
+    .chapter-img img{max-width:100%;border-radius:4px;}
+    .chapter-img figcaption{font-size:.85em;color:#777;margin-top:6px;font-style:italic;}
+    hr{border:none;border-top:1px solid #ddd;margin:3em 0;}
+    .legal{font-size:.8em;color:#888;line-height:1.5;}
+    """
+
+    body_parts: List[str] = []
+
+    # Portada
+    body_parts.append(f"<h1>{_esc(title)}</h1>")
+    if subtitle:
+        body_parts.append(f'<p class="subtitle">{_esc(subtitle)}</p>')
+    body_parts.append(f'<p class="author">{_esc(author_name)}</p>')
+    if cover_image_path and os.path.exists(cover_image_path):
+        b64 = _img_b64(cover_image_path)
+        body_parts.append(f'<div class="cover"><img src="data:image/png;base64,{b64}" alt="Portada"/></div>')
+
+    # Página legal
+    if pagina_legal:
+        body_parts.append(f'<hr/><div class="legal"><p>{_esc(pagina_legal)}</p></div>')
+
+    # Prefacio
+    if prefacio:
+        body_parts.append(f"<hr/><h2>Prefacio</h2><p>{_esc(prefacio)}</p>")
+
+    # Capítulos
+    for ch in (chapters or []):
+        body_parts.append(f"<hr/><h2>{_esc(ch['title'])}</h2>")
+        blocks = parse_formatted_text(ch.get("formatted_content", ch.get("content", "")))
+        img_idx = 0
+        for block in blocks:
+            if isinstance(block, SubtitleBlock):
+                body_parts.append(f"<h3>{_esc(block.text)}</h3>")
+            elif isinstance(block, ImageBlock):
+                img_path = os.path.join(output_dir, f"img_cap{ch['index']:02d}_{img_idx:02d}.png")
+                if os.path.exists(img_path):
+                    b64 = _img_b64(img_path)
+                    body_parts.append(
+                        f'<figure class="chapter-img">'
+                        f'<img src="data:image/png;base64,{b64}" alt="{_esc(block.description)}"/>'
+                        f'<figcaption>{_esc(block.description)}</figcaption></figure>'
+                    )
+                img_idx += 1
+            else:
+                if block.text.strip():
+                    body_parts.append(f"<p>{_esc(block.text.strip())}</p>")
+
+    # Sobre el autor
+    if author_bio:
+        body_parts.append(f"<hr/><h2>Sobre el Autor</h2><p>{_esc(author_bio)}</p>")
+
+    # Agradecimientos
+    if agradecimientos:
+        body_parts.append(f"<hr/><h2>Agradecimientos</h2><p>{_esc(agradecimientos)}</p>")
+
+    html = (
+        f'<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/>'
+        f'<meta name="viewport" content="width=device-width,initial-scale=1"/>'
+        f'<title>{_esc(title)}</title>'
+        f'<style>{CSS}</style></head><body>'
+        + "\n".join(body_parts)
+        + "</body></html>"
+    )
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    filename = f"LIBRO_FINAL_{_safe_title(title)}_{timestamp}.html"
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(html)
+    return filepath
+
+
+def assemble_final_book_epub(
+    output_dir: str,
+    title: str,
+    subtitle: str,
+    author_name: str,
+    author_bio: str,
+    genre: str,
+    prefacio: str,
+    pagina_legal: str,
+    agradecimientos: str,
+    cover_image_path: Optional[str] = None,
+    chapters: List[dict] = None,
+    reference_image_path: str = "",
+    visual_context: str = "",
+) -> str:
+    """Ensambla el libro final en formato EPUB usando ebooklib."""
+    from ebooklib import epub
+    from backend.graph.utils import parse_formatted_text, SubtitleBlock, ImageBlock
+
+    def _esc(text: str) -> str:
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    CHAPTER_CSS = (
+        "body{font-family:Georgia,serif;font-size:1em;line-height:1.7;margin:1em;color:#1a1a1a;}"
+        "h1,h2{font-size:1.5em;margin-top:1.5em;}"
+        "h3{font-size:1.1em;margin-top:1em;}"
+        "p{margin:0 0 0.8em;}"
+        "figure{text-align:center;margin:1.2em 0;}"
+        "figure img{max-width:100%;}"
+        "figcaption{font-size:0.8em;color:#777;font-style:italic;}"
+    )
+
+    book = epub.EpubBook()
+    book.set_identifier(f"obra-{_safe_title(title)}")
+    book.set_title(title)
+    book.set_language("es")
+    book.add_author(author_name)
+    if subtitle:
+        book.add_metadata("DC", "description", subtitle)
+
+    css_item = epub.EpubItem(uid="style", file_name="style.css",
+                              media_type="text/css", content=CHAPTER_CSS)
+    book.add_item(css_item)
+
+    # Portada
+    if cover_image_path and os.path.exists(cover_image_path):
+        with open(cover_image_path, "rb") as f:
+            cover_bytes = f.read()
+        book.set_cover("cover.png", cover_bytes)
+
+    spine: list = ["nav"]
+    toc: list = []
+
+    def _blocks_to_xhtml(blocks, chapter_index: int) -> str:
+        parts = []
+        img_idx = 0
+        for block in blocks:
+            if isinstance(block, SubtitleBlock):
+                parts.append(f"<h3>{_esc(block.text)}</h3>")
+            elif isinstance(block, ImageBlock):
+                img_path = os.path.join(output_dir, f"img_cap{chapter_index:02d}_{img_idx:02d}.png")
+                img_uid = f"img_cap{chapter_index:02d}_{img_idx:02d}"
+                if os.path.exists(img_path):
+                    with open(img_path, "rb") as f:
+                        img_bytes = f.read()
+                    img_item = epub.EpubItem(
+                        uid=img_uid,
+                        file_name=f"images/{img_uid}.png",
+                        media_type="image/png",
+                        content=img_bytes,
+                    )
+                    book.add_item(img_item)
+                    parts.append(
+                        f'<figure><img src="images/{img_uid}.png" alt="{_esc(block.description)}"/>'
+                        f'<figcaption>{_esc(block.description)}</figcaption></figure>'
+                    )
+                img_idx += 1
+            else:
+                if block.text.strip():
+                    parts.append(f"<p>{_esc(block.text.strip())}</p>")
+        return "\n".join(parts)
+
+    def _make_chapter(uid: str, title_text: str, body_html: str, file_name: str) -> epub.EpubHtml:
+        chap = epub.EpubHtml(title=title_text, file_name=file_name, lang="es")
+        chap.content = (
+            f'<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+            f'<link rel="stylesheet" type="text/css" href="style.css"/></head>'
+            f'<body><h2>{_esc(title_text)}</h2>{body_html}</body></html>'
+        )
+        chap.add_item(css_item)
+        return chap
+
+    # Página legal
+    if pagina_legal:
+        c = _make_chapter("legal", "Información Legal",
+                           f"<p>{_esc(pagina_legal)}</p>", "legal.xhtml")
+        book.add_item(c); spine.append(c)
+
+    # Prefacio
+    if prefacio:
+        c = _make_chapter("prefacio", "Prefacio",
+                           f"<p>{_esc(prefacio)}</p>", "prefacio.xhtml")
+        book.add_item(c); spine.append(c)
+        toc.append(epub.Link("prefacio.xhtml", "Prefacio", "prefacio"))
+
+    # Capítulos
+    for ch in (chapters or []):
+        idx = ch["index"]
+        blocks = parse_formatted_text(ch.get("formatted_content", ch.get("content", "")))
+        body = _blocks_to_xhtml(blocks, idx)
+        uid_str = f"chapter_{idx:02d}"
+        c = _make_chapter(uid_str, ch["title"], body, f"{uid_str}.xhtml")
+        book.add_item(c); spine.append(c)
+        toc.append(epub.Link(f"{uid_str}.xhtml", ch["title"], uid_str))
+
+    # Sobre el autor
+    if author_bio:
+        c = _make_chapter("autor", "Sobre el Autor",
+                           f"<p>{_esc(author_bio)}</p>", "autor.xhtml")
+        book.add_item(c); spine.append(c)
+        toc.append(epub.Link("autor.xhtml", "Sobre el Autor", "autor"))
+
+    # Agradecimientos
+    if agradecimientos:
+        c = _make_chapter("agradecimientos", "Agradecimientos",
+                           f"<p>{_esc(agradecimientos)}</p>", "agradecimientos.xhtml")
+        book.add_item(c); spine.append(c)
+
+    book.toc   = toc
+    book.spine = spine
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    filename = f"LIBRO_FINAL_{_safe_title(title)}_{timestamp}.epub"
+    filepath = os.path.join(output_dir, filename)
+    epub.write_epub(filepath, book)
+    return filepath
+
+
 def _parse_inline_markdown(text: str) -> list:
     """
     Convierte markdown inline en segmentos (texto, is_bold, is_italic).

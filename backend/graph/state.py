@@ -136,3 +136,10 @@ class BookState(TypedDict, total=False):
     # El Arquitecto pregunta al usuario y parsea la respuesta.
     # El Maquetador lo usa en _filter_image_blocks() para respetar el límite.
     images_per_chapter: int
+
+    # ── Formato de salida del libro (elegido por el usuario) ─────────────────
+    # "docx"     → Microsoft Word (default)
+    # "epub"     → EPUB (estándar ebooks — Kindle, Apple Books, Kobo)
+    # "html"     → HTML autocontenido con imágenes embebidas en base64
+    # "markdown" → Markdown plano con imágenes como referencias
+    output_format: str
