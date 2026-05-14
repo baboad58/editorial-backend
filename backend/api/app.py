@@ -20,12 +20,14 @@ from backend.api.websocket import book_websocket_handler
 from backend.api.session import session_manager
 from backend.api.invites_db import verify_invite, mark_used
 
-# ── Rate limiter in-memory para /api/verify-invite ───────────────────────────
-_invite_attempts: dict[str, list[float]] = defaultdict(list)
-_WS_connections:  dict[str, list[float]] = defaultdict(list)
-_MAX_INVITE_ATTEMPTS = 5          # intentos por IP por ventana
-_INVITE_WINDOW     = 3600.0       # 1 hora
-_MAX_WS_PER_MIN    = 10           # conexiones WS por IP por minuto
+# ── Rate limiters in-memory ───────────────────────────────────────────────────
+_invite_attempts:  dict[str, list[float]] = defaultdict(list)
+_contact_attempts: dict[str, list[float]] = defaultdict(list)
+_WS_connections:   dict[str, list[float]] = defaultdict(list)
+_MAX_INVITE_ATTEMPTS  = 20         # intentos por IP por ventana (20 en dev, bajar a 5 en prod)
+_MAX_CONTACT_ATTEMPTS = 5          # solicitudes de acceso por IP por hora
+_INVITE_WINDOW        = 3600.0     # 1 hora
+_MAX_WS_PER_MIN       = 10         # conexiones WS por IP por minuto
 
 def _rate_limit_invite(ip: str) -> bool:
     """Devuelve True si la IP puede intentar; False si superó el límite."""
@@ -34,6 +36,15 @@ def _rate_limit_invite(ip: str) -> bool:
     if len(_invite_attempts[ip]) >= _MAX_INVITE_ATTEMPTS:
         return False
     _invite_attempts[ip].append(now)
+    return True
+
+def _rate_limit_contact(ip: str) -> bool:
+    """Máximo 5 solicitudes de acceso por IP por hora."""
+    now = time.time()
+    _contact_attempts[ip] = [t for t in _contact_attempts[ip] if now - t < _INVITE_WINDOW]
+    if len(_contact_attempts[ip]) >= _MAX_CONTACT_ATTEMPTS:
+        return False
+    _contact_attempts[ip].append(now)
     return True
 
 def _rate_limit_ws(ip: str) -> bool:
@@ -137,6 +148,63 @@ def create_app() -> FastAPI:
             await websocket.close(code=1008, reason="Demasiadas conexiones. Intenta en un minuto.")
             return
         await book_websocket_handler(websocket)
+
+    # -- Solicitud de acceso → guarda en contact_submissions (Supabase) -------
+    @app.post("/api/invites/request")
+    async def request_invite(request: Request):
+        """
+        Recibe solicitud de acceso al estudio (nombre, email, idea del libro).
+        Persiste en la tabla contact_submissions de Supabase para revisión del admin.
+        El email de notificación lo envía Lovable via Edge Function send-contact (best-effort).
+        """
+        import ssl
+        import httpx
+        ip = request.client.host if request.client else "unknown"
+        if not _rate_limit_contact(ip):
+            raise HTTPException(
+                status_code=429,
+                detail="Demasiadas solicitudes. Espera una hora antes de volver a intentarlo.",
+            )
+        try:
+            body = await request.json()
+            name  = str(body.get("name",  "")).strip()[:200]
+            email = str(body.get("email", "")).strip().lower()[:200]
+            idea  = str(body.get("idea",  "")).strip()[:2000]
+        except Exception:
+            raise HTTPException(status_code=400, detail="Petición mal formada.")
+        if not name or not email:
+            raise HTTPException(status_code=400, detail="Nombre y email son requeridos.")
+
+        supa_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        supa_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY", "")
+        if not supa_url or not supa_key:
+            raise HTTPException(status_code=503, detail="Servicio de persistencia no configurado.")
+
+        try:
+            import truststore
+            ssl_ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        except Exception:
+            ssl_ctx = True
+
+        try:
+            res = httpx.post(
+                f"{supa_url}/rest/v1/contact_submissions",
+                headers={
+                    "apikey":        supa_key,
+                    "Authorization": f"Bearer {supa_key}",
+                    "Content-Type":  "application/json",
+                    "Prefer":        "return=minimal",
+                },
+                json={"name": name, "email": email, "idea": idea},
+                timeout=10,
+                verify=ssl_ctx,
+            )
+            res.raise_for_status()
+            return {"ok": True}
+        except Exception as e:
+            import logging
+            logging.getLogger("book-factory").error(f"[Contact] Error al guardar solicitud: {e}")
+            raise HTTPException(status_code=500, detail="No se pudo guardar la solicitud. Intenta de nuevo.")
 
     # -- Verificación de código de invitación (Supabase) ----------------------
     @app.post("/api/verify-invite")
