@@ -219,6 +219,200 @@ def _parse_visual_context(visual_context: str) -> dict:
     return ctx
 
 
+# ── Detección de modelo de imagen ─────────────────────────────────────────────
+
+def _detect_image_model(genre: str) -> str:
+    """
+    Detecta el modelo de imagen apropiado para el género:
+      'narrative'    — ficción / infantil / YA: escenas con personajes consistentes
+      'conceptual'   — no-ficción práctica: ilustración metafórica/conceptual
+      'infographic'  — académico / científico: infografía estilo diagrama
+
+    NOTA: 'no-ficción' se evalúa ANTES que 'ficción' para evitar falso positivo
+    por substring (la palabra "ficción" está contenida en "no-ficción").
+    """
+    g = genre.lower()
+    # 1. No-ficción práctica (más específico — evaluar ANTES que ficción)
+    if any(k in g for k in ["no-ficción", "no-ficcion", "no ficción", "no ficcion",
+                              "autoayuda", "auto-ayuda", "negocios", "emprendimiento",
+                              "salud", "bienestar", "finanzas", "liderazgo", "coaching",
+                              "desarrollo personal", "motivacion", "motivación"]):
+        return "conceptual"
+    # 2. Ficción / narrativa (después de no-ficción)
+    if any(k in g for k in ["novela", "cuento", "thriller", "romance", "ciencia ficción",
+                              "ciencia ficcion", "fantasía", "fantasia", "fantasy", "horror",
+                              "terror", "aventura", "misterio", "ficción", "ficcion",
+                              "infantil", "niños", "niñas", "children", "kids", "cuentos",
+                              "juvenil", "young adult", "ya"]):
+        return "narrative"
+    # 3. Académico / científico
+    if any(k in g for k in ["académico", "academico", "científico", "cientifico",
+                              "histórico", "historico", "investigación", "investigacion",
+                              "ensayo", "filosófico", "filosofico", "médico", "medico",
+                              "psicológico", "psicologico", "sociológico", "sociologico",
+                              "económico", "economico", "jurídico", "juridico"]):
+        return "infographic"
+    # 4. Default: conceptual (no-ficción genérica)
+    return "conceptual"
+
+
+def _finalize_prompt(parts: list[str], limit: int = 200) -> str:
+    """Une las partes, limpia espacios y aplica límite de palabras."""
+    prompt = ". ".join(p.strip(" .") for p in parts if p.strip())
+    prompt = re.sub(r"\s+", " ", prompt).strip()
+    words = prompt.split()
+    if len(words) > limit:
+        prompt = " ".join(words[:limit]).rstrip(" ,.;:-")
+    return prompt
+
+
+def _build_narrative_prompt(
+    concept: str,
+    genre: str,
+    visual_context: str,
+    chapter_title: str,
+    content_excerpt: str,
+) -> str:
+    """Ficción / infantil / YA: ilustración narrativa con personajes consistentes."""
+    g = genre.lower()
+    is_children = _is_children(genre)
+
+    if is_children:
+        base_style = ("children's picture book illustration, gouache watercolor style, "
+                      "vivid saturated colors, friendly expressive characters, bold outlines, "
+                      "NOT photorealistic, NOT photograph, NOT 3D render")
+    elif any(k in g for k in ["juvenil", "young adult", "ya"]):
+        base_style = ("young adult graphic novel illustration, semi-realistic digital painting, "
+                      "vibrant colors, expressive characters, NOT photorealistic, NOT photograph")
+    elif any(k in g for k in ["fantasía", "fantasia", "fantasy"]):
+        base_style = ("fantasy book illustration, detailed digital painting, rich colors, "
+                      "dramatic lighting, NOT photograph, NOT 3D render")
+    elif any(k in g for k in ["thriller", "terror", "horror", "ciencia ficción", "ciencia ficcion"]):
+        base_style = ("thriller book illustration, dark atmospheric digital painting, "
+                      "cinematic lighting, moody palette, NOT photograph, NOT photorealistic")
+    elif any(k in g for k in ["romance"]):
+        base_style = ("romance book illustration, warm painterly style, soft elegant composition, "
+                      "NOT photograph, NOT photorealistic")
+    else:
+        base_style = ("editorial book illustration, professional painterly composition, "
+                      "NOT photograph, NOT photorealistic, NOT 3D render")
+
+    ctx        = _parse_visual_context(visual_context)
+    personajes = ctx.get("personajes visuales clave", "")
+    estilo_ctx = ctx.get("estilo artístico", ctx.get("estilo artistico", ""))
+    paleta     = ctx.get("paleta y atmósfera", ctx.get("paleta y atmosfera", ""))
+    epoca      = ctx.get("época y lugar", ctx.get("epoca y lugar", ""))
+    prohib     = ctx.get("prohibiciones", "")
+
+    # Si el visual_context tiene estilo, usarlo — asegurar negativos
+    style = estilo_ctx if estilo_ctx else base_style
+    if "not photo" not in style.lower() and "not photograph" not in style.lower():
+        style += ", NOT photorealistic, NOT photograph"
+
+    parts = []
+    # POSICIÓN 1: Ancla de estilo — prioridad máxima para Gemini
+    parts.append(f"FIXED ILLUSTRATION STYLE (never deviate from this): {style}")
+    # Escena del capítulo
+    core = _extract_core_scene(concept)
+    if core:
+        parts.append(core)
+    # Personajes con descripción física exacta
+    if personajes:
+        parts.append(f"Characters (exact physical descriptions, maintain across all images): {personajes}")
+    # Época y setting
+    if epoca:
+        parts.append(f"Setting: {epoca}")
+    # Paleta/atmósfera
+    if paleta:
+        parts.append(f"Visual atmosphere: {paleta}")
+    # Prohibiciones
+    if prohib:
+        parts.append(f"Do NOT include: {prohib}")
+    parts.append("Professional book illustration quality. Consistent character appearance across all chapters.")
+
+    prompt = _finalize_prompt(parts)
+    logger.debug(f"[Cover] Prompt narrativo: {len(prompt.split())} palabras")
+    return prompt
+
+
+def _build_conceptual_prompt(
+    concept: str,
+    genre: str,
+    visual_context: str,
+    chapter_title: str,
+    content_excerpt: str,
+) -> str:
+    """No-ficción práctica: ilustración metafórica/conceptual, sin personajes narrativos."""
+    ctx    = _parse_visual_context(visual_context)
+    paleta = ctx.get("paleta de marca", ctx.get("paleta y atmósfera", ctx.get("paleta y atmosfera", "")))
+    estilo = ctx.get("estilo iconográfico", ctx.get("estilo artístico", ctx.get("estilo artistico", "")))
+    prohib = ctx.get("prohibiciones", "")
+
+    base_style = ("conceptual editorial illustration, flat design with depth, "
+                  "clean modern professional style, NOT photorealistic, "
+                  "NOT photograph, NOT fictional narrative characters")
+    style = estilo if estilo else base_style
+
+    parts = []
+    parts.append(f"FIXED STYLE (never deviate): {style}")
+    core = _extract_core_scene(concept)
+    if core:
+        parts.append(core)
+    elif chapter_title:
+        parts.append(f"Conceptual visual metaphor for: {chapter_title}")
+    if paleta:
+        parts.append(f"Color palette (apply consistently): {paleta}")
+    combined_prohib = "fictional narrative characters with names, specific real people, photorealistic scenes"
+    if prohib:
+        combined_prohib += f", {prohib}"
+    parts.append(f"Do NOT include: {combined_prohib}")
+    parts.append("Professional non-fiction book interior illustration. Symbolic and universal imagery.")
+
+    prompt = _finalize_prompt(parts)
+    logger.debug(f"[Cover] Prompt conceptual: {len(prompt.split())} palabras")
+    return prompt
+
+
+def _build_infographic_prompt(
+    concept: str,
+    genre: str,
+    visual_context: str,
+    chapter_title: str,
+    content_excerpt: str,
+) -> str:
+    """Académico / científico: infografía estilo diagrama, sin escenas narrativas."""
+    ctx       = _parse_visual_context(visual_context)
+    paleta    = ctx.get("paleta editorial", ctx.get("paleta de marca", "deep blue, slate grey, white, teal accent"))
+    estilo    = ctx.get("estilo visual", ctx.get("estilo artístico", ctx.get("estilo artistico", "")))
+    elementos = ctx.get("elementos permitidos", "arrows, geometric shapes, flow diagrams, data nodes, labels")
+    prohib    = ctx.get("prohibiciones", "")
+
+    base_style = ("clean scientific infographic illustration, Nature and Scientific American magazine style, "
+                  "flat design with subtle depth, crisp typography-ready layout, "
+                  "NOT photorealistic, NOT narrative scene, NOT fictional characters, NOT photograph")
+    style = estilo if estilo else base_style
+
+    core = _extract_core_scene(concept)
+    subject = core if core else chapter_title
+
+    parts = []
+    parts.append(f"FIXED STYLE (never deviate): {style}")
+    if subject:
+        parts.append(f"Infographic visualizing: {subject}")
+    parts.append(f"Visual elements to use: {elementos}")
+    if paleta:
+        parts.append(f"Color palette (apply consistently): {paleta}")
+    combined_prohib = "people's faces, realistic photographs, narrative scenes, fictional characters, more than 4 simultaneous colors"
+    if prohib:
+        combined_prohib += f", {prohib}"
+    parts.append(f"Do NOT include: {combined_prohib}")
+    parts.append("Professional academic publication quality. Clean, readable, suitable for scientific book interior.")
+
+    prompt = _finalize_prompt(parts)
+    logger.debug(f"[Cover] Prompt infográfico: {len(prompt.split())} palabras")
+    return prompt
+
+
 def _build_chapter_prompt(
     concept: str,
     genre: str,
@@ -226,80 +420,14 @@ def _build_chapter_prompt(
     chapter_title: str = "",
     content_excerpt: str = "",
 ) -> str:
-    is_children = _is_children(genre)
-    g = genre.lower()
-
-    # Estilo base por género — se puede sobreescribir con "estilo artístico" del visual_context
-    if is_children:
-        base_style = "children's picture book illustration, gouache watercolor style, vivid saturated colors, friendly characters, bold outlines"
-    elif any(k in g for k in ["juvenil", "young adult", "ya"]):
-        base_style = "young adult book illustration, semi-realistic digital painting, vibrant colors, expressive characters"
-    elif any(k in g for k in ["fantasía", "fantasia", "fantasy"]):
-        base_style = "fantasy book illustration, detailed digital art, rich colors, dramatic lighting"
-    elif any(k in g for k in ["thriller", "terror", "horror", "ciencia ficción", "ciencia ficcion"]):
-        base_style = "thriller book illustration, dark atmospheric, cinematic lighting, moody palette"
-    elif any(k in g for k in ["romance"]):
-        base_style = "romance book illustration, warm painterly style, soft elegant composition"
+    """Delega al builder correcto según el modelo de imagen del género."""
+    model = _detect_image_model(genre)
+    if model == "narrative":
+        return _build_narrative_prompt(concept, genre, visual_context, chapter_title, content_excerpt)
+    elif model == "infographic":
+        return _build_infographic_prompt(concept, genre, visual_context, chapter_title, content_excerpt)
     else:
-        base_style = "editorial book illustration, professional composition, sophisticated style"
-
-    # Extraer TODOS los campos del visual_context
-    ctx = _parse_visual_context(visual_context)
-    epoca      = ctx.get("época y lugar", ctx.get("epoca y lugar", ""))
-    personajes = ctx.get("personajes visuales clave", "")
-    estilo_ctx = ctx.get("estilo artístico", ctx.get("estilo artistico", ""))
-    paleta     = ctx.get("paleta y atmósfera", ctx.get("paleta y atmosfera", ""))
-    prohib     = ctx.get("prohibiciones", "")
-
-    # El estilo artístico del visual_context tiene prioridad si existe
-    style = estilo_ctx if estilo_ctx else base_style
-
-    # Construir el prompt en secciones con prioridad clara:
-    # 1. Escena concreta (concept) — lo que ocurre en ESTA imagen
-    # 2. Personajes con descripción física completa — para consistencia
-    # 3. Época y lugar — para consistencia de setting
-    # 4. Paleta/atmósfera — para consistencia visual
-    # 5. Estilo artístico — para coherencia de técnica
-    # 6. Prohibiciones — para evitar inconsistencias
-    parts = []
-
-    # Escena principal (descripción [IMAGEN:] generada por el Layouter)
-    core_scene = _extract_core_scene(concept)
-    if core_scene:
-        parts.append(core_scene)
-
-    # Personajes — campo más crítico para consistencia
-    if personajes:
-        parts.append(f"Characters (use exact physical descriptions): {personajes}")
-
-    # Época y lugar
-    if epoca:
-        parts.append(f"Setting: {epoca}")
-
-    # Paleta y atmósfera
-    if paleta:
-        parts.append(f"Visual atmosphere: {paleta}")
-
-    # Estilo artístico
-    if style:
-        parts.append(style)
-
-    # Prohibiciones — al final para no contaminar el inicio del prompt
-    if prohib:
-        parts.append(f"Do NOT include: {prohib}")
-
-    parts.append("Professional book illustration quality, consistent character appearance.")
-
-    prompt = ". ".join(p.strip(" .") for p in parts if p.strip())
-    prompt = re.sub(r"\s+", " ", prompt).strip()
-
-    # Límite generoso — Ideogram maneja hasta ~300 palabras bien
-    words = prompt.split()
-    if len(words) > 200:
-        prompt = " ".join(words[:200]).rstrip(" ,.;:-")
-
-    logger.debug(f"[Cover] Prompt capítulo: {len(prompt.split())} palabras, {len(prompt)} chars")
-    return prompt
+        return _build_conceptual_prompt(concept, genre, visual_context, chapter_title, content_excerpt)
 
 
 def _build_safe_chapter_prompt(genre: str) -> str:

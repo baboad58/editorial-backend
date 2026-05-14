@@ -103,8 +103,10 @@ Reglas ESTRICTAS:
 - Devuelve SOLO el texto con marcadores, sin explicaciones ni comentarios adicionales"""
 
 
-VISUAL_CONTEXT_PROMPT = """Analiza estos datos del libro y genera un CONTEXTO VISUAL DETALLADO
-para que todas las ilustraciones sean coherentes entre sí a lo largo de los capítulos.
+# ── Prompts de contexto visual por familia de género ─────────────────────────
+
+VISUAL_CONTEXT_PROMPT_NARRATIVE = """Analiza estos datos del libro y genera un CONTEXTO VISUAL DETALLADO
+para que todas las ilustraciones narrativas sean coherentes entre sí a lo largo de los capítulos.
 Las descripciones de personajes deben ser lo suficientemente detalladas para que un
 generador de imágenes pueda recrear exactamente el mismo personaje en cada capítulo.
 
@@ -121,12 +123,90 @@ PRIMER CAPÍTULO:
 Genera exactamente estas cinco líneas, sin encabezados ni formato adicional:
 
 Época y lugar: [específico: país/región, período histórico o año aproximado, ambiente predominante (urbano/rural/submarino/etc.)]
-Personajes visuales clave: [por cada personaje: NOMBRE + edad aproximada + complexión + color y largo de cabello + rasgos faciales distintivos + ropa típica + un detalle visual único que lo identifique. Separar personajes con " | "]
-Estilo artístico: [técnica específica de ilustración + paleta de colores dominante con 3-4 colores hex o descriptivos + nivel de realismo + referentes visuales concretos]
-Paleta y atmósfera: [colores predominantes de las escenas, tipo de iluminación, ambiente visual general que debe mantenerse constante]
-Prohibiciones: [lista de elementos visuales que NO deben aparecer — anacronismos, colores prohibidos, estilos incompatibles con el tono]
+Personajes visuales clave: [por cada personaje: NOMBRE + edad aproximada + complexión + color y largo de cabello + rasgos faciales distintivos + ropa típica + un detalle visual único. Separar personajes con " | "]
+Estilo artístico: [técnica de ilustración + paleta de 3-4 colores hex o descriptivos + referentes visuales concretos + OBLIGATORIO incluir: "NOT photorealistic, NOT photograph, NOT 3D render"]
+Paleta y atmósfera: [colores predominantes, tipo de iluminación, ambiente visual constante en todos los capítulos]
+Prohibiciones: [elementos que NO deben aparecer — estilos incompatibles, anacronismos, elementos fuera de tono]
 
 Responde SOLO con las cinco líneas. Sin explicaciones ni texto adicional."""
+
+VISUAL_CONTEXT_PROMPT_CONCEPTUAL = """Analiza estos datos del libro y genera un CONTEXTO VISUAL
+para que las ilustraciones conceptuales sean coherentes en estilo a lo largo de los capítulos.
+Este libro de no-ficción práctica usa ilustraciones metafóricas y conceptuales, NO escenas narrativas.
+
+DATOS DEL LIBRO:
+- Género: {genre}
+- Tono: {tone}
+- Estilo de escritura: {writing_style}
+- Arco del libro: {book_arc}
+
+PRIMER CAPÍTULO:
+- Resumen: {first_chapter_summary}
+- Puntos clave: {first_chapter_key_points}
+
+Genera exactamente estas tres líneas, sin encabezados ni formato adicional:
+
+Paleta de marca: [3-4 colores hex o descriptivos que definen la identidad visual del libro — deben ser consistentes en todas las imágenes]
+Estilo iconográfico: [técnica visual: flat design / editorial moderno / acuarela conceptual / etc. + referentes: estilo similar a Harvard Business Review / TED / etc. + OBLIGATORIO: "NOT photorealistic, NOT fictional narrative characters"]
+Prohibiciones: [elementos que NO deben aparecer — personas ficticias con nombres, escenas narrativas, fotografías realistas, elementos incompatibles con el tono profesional]
+
+Responde SOLO con las tres líneas. Sin explicaciones ni texto adicional."""
+
+VISUAL_CONTEXT_PROMPT_INFOGRAPHIC = """Analiza estos datos del libro y genera un CONTEXTO VISUAL
+para que las infografías sean coherentes en estilo a lo largo de los capítulos.
+Este libro académico/científico usa infografías y diagramas, NO ilustraciones narrativas.
+
+DATOS DEL LIBRO:
+- Género: {genre}
+- Tono: {tone}
+- Estilo de escritura: {writing_style}
+- Arco del libro: {book_arc}
+
+PRIMER CAPÍTULO:
+- Resumen: {first_chapter_summary}
+- Puntos clave: {first_chapter_key_points}
+
+Genera exactamente estas cuatro líneas, sin encabezados ni formato adicional:
+
+Paleta editorial: [2-3 colores sobrios hex o descriptivos — azul académico, gris slate, blanco, con 1 color de acento — consistentes en todas las infografías]
+Estilo visual: [tipo de infografía: diagrama de flujo / mapa conceptual / visualización de datos / etc. + referentes: estilo similar a Nature / Scientific American / The Economist + OBLIGATORIO: "NOT photorealistic, NOT narrative scene, NOT fictional characters"]
+Elementos permitidos: [elementos gráficos válidos para este libro — flechas, formas geométricas, nodos, tablas, iconos, líneas de tiempo, etc.]
+Prohibiciones: [elementos que NO deben aparecer — personas reales, escenas ficticias, fondos complejos, más de 4 colores simultáneos]
+
+Responde SOLO con las cuatro líneas. Sin explicaciones ni texto adicional."""
+
+
+def _detect_image_model(genre: str) -> str:
+    """
+    Detecta el modelo de imagen apropiado para el género.
+    Retorna: 'narrative' | 'conceptual' | 'infographic'
+
+    NOTA: 'no-ficción' se evalúa ANTES que 'ficción' para evitar falso positivo
+    por substring (la palabra "ficción" está contenida en "no-ficción").
+    """
+    g = genre.lower()
+    # 1. No-ficción práctica (más específico — ANTES que ficción)
+    if any(k in g for k in ["no-ficción", "no-ficcion", "no ficción", "no ficcion",
+                              "autoayuda", "auto-ayuda", "negocios", "emprendimiento",
+                              "salud", "bienestar", "finanzas", "liderazgo", "coaching",
+                              "desarrollo personal", "motivacion", "motivación"]):
+        return "conceptual"
+    # 2. Ficción / narrativa
+    if any(k in g for k in ["novela", "cuento", "thriller", "romance", "ciencia ficción",
+                              "ciencia ficcion", "fantasía", "fantasia", "fantasy", "horror",
+                              "terror", "aventura", "misterio", "ficción", "ficcion",
+                              "infantil", "niños", "niñas", "children", "kids", "cuentos",
+                              "juvenil", "young adult", "ya"]):
+        return "narrative"
+    # 3. Académico / científico
+    if any(k in g for k in ["académico", "academico", "científico", "cientifico",
+                              "histórico", "historico", "investigación", "investigacion",
+                              "ensayo", "filosófico", "filosofico", "médico", "medico",
+                              "psicológico", "psicologico", "sociológico", "sociologico",
+                              "económico", "economico", "jurídico", "juridico"]):
+        return "infographic"
+    # 4. Default: conceptual
+    return "conceptual"
 
 
 # ── Reglas de formato por género ────────────────────────────────────────────
@@ -336,7 +416,10 @@ def _get_llm() -> ChatAnthropic:
 def _build_visual_context(state: BookState) -> str:
     """
     Genera UNA SOLA VEZ el contexto visual del libro para que todos los [IMAGEN:]
-    sean coherentes entre capítulos: misma época, mismos personajes, mismo estilo.
+    sean coherentes entre capítulos. El prompt varía según el modelo de imagen:
+      - narrative:    5 campos con personajes + estilo artístico bloqueado
+      - conceptual:   3 campos con paleta de marca + estilo iconográfico
+      - infographic:  4 campos con paleta editorial + elementos de diagrama
 
     Se llama únicamente cuando visual_context no existe en el estado (capítulo 1).
     Temperatura 0.1 — la inferencia visual debe ser precisa y determinista.
@@ -347,6 +430,8 @@ def _build_visual_context(state: BookState) -> str:
         logger.warning("[Maquetador] Sin chapter_outlines — contexto visual omitido.")
         return ""
 
+    genre    = state.get("genre", "")
+    model    = _detect_image_model(genre)
     first_ch = outlines[0]
     arc_data = state.get("book_arc", {})
     book_arc_summary = (
@@ -355,14 +440,21 @@ def _build_visual_context(state: BookState) -> str:
         f"Resolución: {arc_data.get('resolution', '—')}"
     ) if arc_data else "Arco no definido"
 
-    prompt = VISUAL_CONTEXT_PROMPT.format(
-        genre=state.get("genre", ""),
+    template = {
+        "narrative":   VISUAL_CONTEXT_PROMPT_NARRATIVE,
+        "conceptual":  VISUAL_CONTEXT_PROMPT_CONCEPTUAL,
+        "infographic": VISUAL_CONTEXT_PROMPT_INFOGRAPHIC,
+    }[model]
+
+    prompt = template.format(
+        genre=genre,
         tone=state.get("tone", ""),
         writing_style=state.get("writing_style", ""),
         book_arc=book_arc_summary,
         first_chapter_summary=first_ch.get("summary", ""),
         first_chapter_key_points=", ".join(first_ch.get("key_points", [])),
     )
+    logger.info(f"[Maquetador] Modelo de imagen detectado: '{model}' para género: '{genre}'")
 
     try:
         llm_visual = ChatAnthropic(
@@ -614,23 +706,57 @@ def layouter_node(state: BookState) -> dict:
         logger.info("[Maquetador] visual_context vacío — generando contexto visual del libro.")
         visual_context = _build_visual_context(state)
 
-    # Sección condicional: solo se incluye en el prompt si hay contexto visual
-    visual_section = (
-        f"\n## VISUAL CONTEXT (MANDATORY)\n{visual_context}\n\n"
-        "RULE FOR EACH [IMAGEN:]: Write the description IN ENGLISH — it will be sent "
-        "directly to an AI image generator (Ideogram). Make it a complete, self-contained "
-        "visual prompt. MUST include:\n"
-        "1. CONCRETE ACTION: what the characters are doing at this exact moment\n"
-        "2. PHYSICAL CHARACTERS: described per the visual context (colors, clothing, features)\n"
-        "3. SETTING: location, time of day, weather, background colors\n"
-        "4. EMOTION/ATMOSPHERE: facial expressions, emotional mood of the scene\n"
-        "Example correct: [IMAGEN: An 8-year-old girl with red braids and a blue dress "
-        "holds a yellow lantern, gazing upward in awe inside a dark pine forest. "
-        "Golden light rays pierce the canopy. Magical and curious atmosphere.]\n"
-        "Example WRONG: [IMAGEN: The important moment of the chapter]\n"
-        "NEVER use anachronistic elements. NEVER use names without physical description.\n"
-        if visual_context else ""
-    )
+    # Sección condicional: instrucción de [IMAGEN:] varía por modelo de imagen
+    image_model = _detect_image_model(genre)
+    if not visual_context:
+        visual_section = ""
+    elif image_model == "narrative":
+        visual_section = (
+            f"\n## VISUAL CONTEXT (MANDATORY — apply to every [IMAGEN:])\n{visual_context}\n\n"
+            "RULE FOR EACH [IMAGEN:]: Write IN ENGLISH — sent directly to Gemini image generator.\n"
+            "MUST include ALL of these:\n"
+            "1. CONCRETE ACTION: the most visually striking moment of this specific chapter scene\n"
+            "2. PHYSICAL CHARACTERS: exact names + physical attributes from visual context above\n"
+            "3. SETTING: specific location, time of day, weather, background details from this chapter\n"
+            "4. EMOTION matching the arc_role of this chapter (e.g. 'horror clímax' → extreme dread)\n"
+            "Example CORRECT: [IMAGEN: Valeria, 16, dark curly hair, torn wetsuit, grips a glowing blue stone "
+            "with both hands. She stands on a rocky seafloor in dim green light. Her eyes are wide with terror "
+            "as a massive shadow moves behind her. Oppressive deep-sea atmosphere, claustrophobic.]\n"
+            "Example WRONG: [IMAGEN: The important moment of the chapter]\n"
+            "NEVER use character names without physical description. NEVER use anachronistic elements.\n"
+        )
+    elif image_model == "infographic":
+        visual_section = (
+            f"\n## VISUAL CONTEXT (MANDATORY — apply to every [IMAGEN:])\n{visual_context}\n\n"
+            "RULE FOR EACH [IMAGEN:]: Write IN ENGLISH — sent directly to Gemini image generator.\n"
+            "Each [IMAGEN:] must describe a SCIENTIFIC INFOGRAPHIC, not a narrative scene.\n"
+            "MUST include:\n"
+            "1. INFOGRAPHIC TYPE: flow diagram / concept map / timeline / comparison chart / process diagram\n"
+            "2. SUBJECT: the key concept, process, or relationship this chapter explains\n"
+            "3. VISUAL STRUCTURE: how elements connect (arrows, nodes, sections, labels)\n"
+            "4. COLOR PALETTE: from the visual context above\n"
+            "Example CORRECT: [IMAGEN: Scientific infographic showing the carbon cycle as a circular flow diagram. "
+            "Arrows connect: atmosphere, ocean, soil, and plants. Deep blue and slate grey palette with teal accents. "
+            "Clean labels, geometric shapes, white background. Nature magazine style.]\n"
+            "Example WRONG: [IMAGEN: A scientist in a lab studying carbon]\n"
+            "NEVER include people, faces, or narrative scenes in infographic descriptions.\n"
+        )
+    else:  # conceptual
+        visual_section = (
+            f"\n## VISUAL CONTEXT (MANDATORY — apply to every [IMAGEN:])\n{visual_context}\n\n"
+            "RULE FOR EACH [IMAGEN:]: Write IN ENGLISH — sent directly to Gemini image generator.\n"
+            "Each [IMAGEN:] must describe a CONCEPTUAL/METAPHORICAL illustration, not a narrative scene.\n"
+            "MUST include:\n"
+            "1. CENTRAL METAPHOR: what object, abstract composition, or symbol represents the chapter's main idea\n"
+            "2. VISUAL COMPOSITION: how the metaphor is rendered (geometric, organic, minimalist, etc.)\n"
+            "3. COLOR PALETTE: from the visual context above (brand consistency)\n"
+            "4. MOOD/TONE: professional, inspiring, thought-provoking, etc.\n"
+            "Example CORRECT: [IMAGEN: Conceptual illustration of a single small plant growing through a concrete crack. "
+            "Flat design style, clean lines. Color palette: deep green, warm grey, white. "
+            "Represents resilience and growth. Minimalist editorial composition.]\n"
+            "Example WRONG: [IMAGEN: A businessperson named John making a decision]\n"
+            "NEVER include specific fictional characters. Use universal symbolic imagery.\n"
+        )
 
     logger.info(
         f"[Maquetador] Iniciando formato del capítulo {chapter_index + 1}: "
