@@ -173,7 +173,7 @@ REVIEW_PROMPT = """Revisa este capítulo con criterio editorial de bestseller:
 
 ## CRITERIOS DE GÉNERO
 {genre_criteria}
-
+{humanize_note}
 ## TEXTO DEL CAPÍTULO:
 {chapter_text}
 
@@ -189,6 +189,28 @@ WORD_COUNT_RULE_OK = """✅ Extensión correcta: {actual_words} palabras (objeti
 
 SOURCE_RULE_NONE = """Nivel NONE (ficción/infantil): verifica que los datos del mundo
 real mencionados sean verosímiles. No se exigen citas formales."""
+
+HUMANIZE_PROSE_NOTE = """
+## NOTA ESPECIAL — VOZ VERNÁCULA ACTIVADA
+
+Este capítulo fue escrito con voz narrativa vernácula intencional por instrucción del autor.
+Evalúa la prosa con el estándar de AUTENTICIDAD DE VOZ, no de corrección formal.
+
+Las siguientes características son VIRTUDES en este modo, no defectos:
+- Oraciones que comienzan con "Y", "Pero", "Porque", "Aunque" — crean ritmo oral natural.
+- Perífrasis verbales coloquiales ("fue y se cayó", "se quedó mirando") — marcan voz auténtica.
+- Imprecisión deliberada y hipérbole natural ("un millón de veces", "tardó siglos") — humaniza.
+- Frases nominales breves sin verbo conjugado ("Silencio. Nada.") — tensión cinematográfica.
+- Vocabulario cotidiano sobre léxico elevado — accesibilidad es un valor, no pobreza.
+
+Lo que SÍ debes penalizar incluso en modo vernáculo:
+- Verbos genéricos de IA (realizar, implementar, efectuar) — el registro coloquial los excluye.
+- Conectores de transición académicos (sin embargo, no obstante, cabe destacar) — rompen la voz.
+- Párrafos consecutivos con el mismo sujeto — sigue siendo un defecto de ritmo.
+- Mostrar → explicar: nombrar emociones en vez de generarlas sigue siendo el error principal.
+
+Ajusta tu puntuación de prose_score en consecuencia: una prosa vernácula bien ejecutada
+merece 8.5-9.5, no 7.5-8.0 como recibiría una prosa formal equivalente."""
 
 SOURCE_RULE_STANDARD = """Nivel STANDARD (no-ficción práctica): OBLIGATORIO que todo
 dato, estadística o caso real tenga atribución de fuente en el texto.
@@ -463,6 +485,9 @@ def editor_node(state: BookState) -> dict:
         f"Resolución: {arc_data.get('resolution', '—')}"
     ) if arc_data else "Arco no definido"
 
+    # Nota de voz vernácula: informa al Editor cuando humanize_writing está activo
+    humanize_note = HUMANIZE_PROSE_NOTE if state.get("humanize_writing") else ""
+
     prompt = REVIEW_PROMPT.format(
         title=state.get("title", "Sin título"),
         genre=genre,
@@ -471,6 +496,7 @@ def editor_node(state: BookState) -> dict:
         writing_style=state.get("writing_style", ""),
         book_arc=book_arc_summary,
         genre_criteria=genre_criteria,
+        humanize_note=humanize_note,
         chapter_num=chapter_index + 1,
         total_chapters=state.get("num_chapters", 1),
         chapter_title=chapter["title"],
