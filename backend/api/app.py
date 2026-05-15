@@ -201,11 +201,49 @@ def create_app() -> FastAPI:
                 verify=ssl_ctx,
             )
             res.raise_for_status()
-            return {"ok": True}
         except Exception as e:
             import logging
             logging.getLogger("book-factory").error(f"[Contact] Error al guardar solicitud: {e}")
             raise HTTPException(status_code=500, detail="No se pudo guardar la solicitud. Intenta de nuevo.")
+
+        # Enviar correo de confirmación al solicitante (best-effort)
+        resend_key = os.getenv("RESEND_API_KEY", "")
+        if resend_key:
+            try:
+                html_confirm = f"""<!doctype html>
+<html lang="es">
+  <body style="margin:0;padding:24px;background:#f5f5f4;font-family:Helvetica,Arial,sans-serif;color:#1c1917;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+           style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e7e5e4;border-radius:12px;">
+      <tr><td style="padding:28px 28px 8px;">
+        <p style="font-size:12px;letter-spacing:0.2em;text-transform:uppercase;color:#a8a29e;margin:0 0 8px;">Editorial OBRA</p>
+        <h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 16px;color:#0c0a09;">Hola {name},</h1>
+        <p style="font-size:15px;line-height:1.55;margin:0 0 16px;">
+          Hemos recibido tu solicitud de acceso al estudio. La revisaremos pronto y te enviaremos
+          tu código de invitación a este mismo correo.
+        </p>
+        <p style="font-size:14px;color:#57534e;margin:0;">Te saluda atentamente,<br/><strong>Alfred</strong></p>
+      </td></tr>
+    </table>
+  </body>
+</html>"""
+                httpx.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                    json={
+                        "from":    "Editorial OBRA <onboarding@resend.dev>",
+                        "to":      [email],
+                        "subject": "Recibimos tu solicitud — Editorial OBRA",
+                        "html":    html_confirm,
+                        "text":    f"Hola {name},\n\nHemos recibido tu solicitud. Te enviaremos tu código de acceso pronto.\n\nAlfred",
+                    },
+                    timeout=10,
+                    verify=ssl_ctx,
+                )
+            except Exception:
+                pass  # El guardado ya fue exitoso; el correo falla silenciosamente
+
+        return {"ok": True}
 
     # -- Verificación de código de invitación (Supabase) ----------------------
     @app.post("/api/verify-invite")
