@@ -2,15 +2,15 @@
 Consola de administración: gestión de solicitudes de invitación y códigos de acceso.
 
 Endpoints:
-  POST /api/admin/login            — autenticar con ADMIN_USER / ADMIN_PASSWORD
+  POST /api/admin/login            — autenticar contra tabla admin_users de Supabase
   GET  /api/admin/data             — listar submissions + códigos (requiere token)
   POST /api/admin/assign           — asignar código a una solicitud + enviar correo
   POST /api/admin/generate-codes   — generar N códigos disponibles en el pool
 
 Variables de entorno requeridas en .env:
-  ADMIN_USER       — usuario de la consola (ej. alfred)
-  ADMIN_PASSWORD   — contraseña de la consola
-  RESEND_API_KEY   — API key de Resend para envío de correos (opcional; si falta, assign igual funciona)
+  SUPABASE_URL         — ya existente
+  SUPABASE_SERVICE_KEY — ya existente
+  RESEND_API_KEY       — API key de Resend para envío de correos (opcional)
 
 Migración SQL requerida (ejecutar UNA VEZ en SQL Editor de Supabase):
 ─────────────────────────────────────────────────────────────────────
@@ -85,13 +85,24 @@ def verify_admin_token(token: str) -> dict:
 # ── Autenticación ─────────────────────────────────────────────────────────────
 
 async def handle_login(body: dict) -> dict:
-    admin_user = os.getenv("ADMIN_USER", "")
-    admin_pass = os.getenv("ADMIN_PASSWORD", "")
-    if not admin_user or not admin_pass:
-        raise ValueError("ADMIN_USER y ADMIN_PASSWORD no configuradas en .env")
-    if body.get("codigo_usuario") != admin_user or body.get("contrasena") != admin_pass:
+    codigo   = str(body.get("codigo_usuario", "")).strip()
+    contrasena = str(body.get("contrasena", "")).strip()
+    if not codigo or not contrasena:
         raise PermissionError("Credenciales incorrectas.")
-    return create_admin_token(admin_user)
+
+    async with httpx.AsyncClient(verify=_ssl_ctx, timeout=10) as client:
+        r = await client.get(
+            _supa_url("admin_users"),
+            headers=_supa_headers(),
+            params={"codigo_usuario": f"eq.{codigo}", "select": "codigo_usuario,contrasena"},
+        )
+        r.raise_for_status()
+        rows = r.json()
+
+    if not rows or rows[0].get("contrasena") != contrasena:
+        raise PermissionError("Credenciales incorrectas.")
+
+    return create_admin_token(rows[0]["codigo_usuario"])
 
 
 # ── Datos ─────────────────────────────────────────────────────────────────────
