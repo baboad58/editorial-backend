@@ -35,6 +35,7 @@ import logging
 from datetime import datetime, timezone
 
 import httpx
+import bcrypt
 try:
     import truststore
     _ssl_ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -96,8 +97,8 @@ async def handle_login(body: dict) -> dict:
             headers=_supa_headers(),
             params={
                 "codigo_usuario": f"eq.{codigo}",
-                "Estado":         "eq.Activo",
-                "select":         "codigo_usuario,contrasena,Estado",
+                "estado":         "eq.Activo",
+                "select":         "codigo_usuario,contrasena,estado",
             },
         )
         r.raise_for_status()
@@ -105,7 +106,9 @@ async def handle_login(body: dict) -> dict:
 
     if not rows:
         raise PermissionError("Credenciales incorrectas o usuario inactivo.")
-    if rows[0].get("contrasena") != contrasena:
+
+    hash_guardado = rows[0].get("contrasena", "")
+    if not bcrypt.checkpw(contrasena.encode("utf-8"), hash_guardado.encode("utf-8")):
         raise PermissionError("Credenciales incorrectas.")
 
     return create_admin_token(rows[0]["codigo_usuario"])
