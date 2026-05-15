@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../integrations/supabase/client'
 import heroImg from '../assets/hero-library.jpg'
+import AdminLoginModal from './AdminLoginModal'
 
 const STEPS = [
   {
@@ -211,19 +212,28 @@ function ContactCTA() {
     setErrors(e)
     if (Object.keys(e).length) return
 
+    const payload = {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      idea: form.idea.trim(),
+    }
+
     setSubmitting(true)
     try {
-      const { error } = await supabase.functions.invoke('send-contact', {
-        body: {
-          name: form.name.trim(),
-          email: form.email.trim(),
-          idea: form.idea.trim(),
-        },
-      })
-      if (error) throw error
+      const { data, error } = await supabase.functions.invoke('send-contact', { body: payload })
+      if (error || data?.error) {
+        const msg = data?.error || error?.message || ''
+        console.error('send-contact failed:', error || data?.error)
+        if (/429|demasiadas/i.test(msg)) {
+          setSubmitError('Has enviado demasiadas solicitudes. Inténtalo de nuevo en una hora.')
+        } else {
+          setSubmitError('No hemos podido registrar tu solicitud. Inténtalo de nuevo en unos minutos.')
+        }
+        return
+      }
       setSent(true)
     } catch (err) {
-      console.error('send-contact failed:', err)
+      console.error('handleSubmit unexpected error:', err)
       setSubmitError('No hemos podido enviar tu mensaje. Inténtalo de nuevo en unos minutos.')
     } finally {
       setSubmitting(false)
@@ -332,6 +342,19 @@ function Field({ label, error, children }) {
 
 /* ───────────────────────── FOOTER ───────────────────────── */
 function Footer() {
+  const navigate = useNavigate()
+  const [showAdmin, setShowAdmin] = useState(false)
+  const clicksRef = useRef([])
+
+  function onYearClick() {
+    const now = Date.now()
+    clicksRef.current = [...clicksRef.current.filter(t => now - t < 2000), now]
+    if (clicksRef.current.length >= 3) {
+      clicksRef.current = []
+      setShowAdmin(true)
+    }
+  }
+
   return (
     <footer className="border-t border-white/5 py-16 px-6">
       <div className="max-w-3xl mx-auto text-center space-y-6">
@@ -347,7 +370,9 @@ function Footer() {
         <div className="mx-auto h-px w-16 bg-white/10" />
 
         <p className="text-xs text-stone-600 tracking-wider uppercase">
-          Editorial de obras creadas con IA · © {new Date().getFullYear()} Obra
+          Editorial de obras creadas con IA · ©{' '}
+          <span onClick={onYearClick} className="select-none">{new Date().getFullYear()}</span>
+          {' '}Obra
         </p>
 
         <p className="text-xs text-stone-600">
@@ -356,6 +381,12 @@ function Footer() {
           <Link to="/terminos" className="hover:text-gold-400 transition-colors">Términos de Servicio</Link>
         </p>
       </div>
+
+      <AdminLoginModal
+        open={showAdmin}
+        onClose={() => setShowAdmin(false)}
+        onSuccess={() => { setShowAdmin(false); navigate('/admin/solicitudes') }}
+      />
     </footer>
   )
 }
