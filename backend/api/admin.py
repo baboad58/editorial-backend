@@ -92,14 +92,20 @@ async def handle_login(body: dict) -> dict:
 
     async with httpx.AsyncClient(verify=_ssl_ctx, timeout=10) as client:
         r = await client.get(
-            _supa_url("admin_users"),
+            _supa_url("usuarios"),
             headers=_supa_headers(),
-            params={"codigo_usuario": f"eq.{codigo}", "select": "codigo_usuario,contrasena"},
+            params={
+                "codigo_usuario": f"eq.{codigo}",
+                "Estado":         "eq.Activo",
+                "select":         "codigo_usuario,contrasena,Estado",
+            },
         )
         r.raise_for_status()
         rows = r.json()
 
-    if not rows or rows[0].get("contrasena") != contrasena:
+    if not rows:
+        raise PermissionError("Credenciales incorrectas o usuario inactivo.")
+    if rows[0].get("contrasena") != contrasena:
         raise PermissionError("Credenciales incorrectas.")
 
     return create_admin_token(rows[0]["codigo_usuario"])
