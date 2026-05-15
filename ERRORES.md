@@ -28,6 +28,17 @@
 | E17 | `react-router-dom@^7.x` not found en npm | npm caché desactualizado + SSL corporativo | `frontend/` |
 | E18 | `Messages.create() got unexpected keyword argument 'http_client'` | http_client no soportado en esta versión de ChatAnthropic | `graph/utils.py` |
 | E19 | Imagen queda en página separada del título | `doc.add_page_break()` antes de primera imagen | `tools/documents.py` |
+| E20 | `process is not defined` en consola admin | `process.env` no existe en Vite (solo Node.js) | `frontend/integrations/supabase/client.ts` |
+| E21 | `Reflect.get called on non-object` en admin | Proxy de Supabase llama `Reflect.get(null,...)` cuando cliente es null | `frontend/integrations/supabase/client.ts` |
+| E22 | Variables `VITE_*` no disponibles en Vite | `.env` estaba en `book-factory/` pero Vite lee desde `book-factory/frontend/` | `frontend/vite.config.js` |
+| E23 | `Failed to send a request to the Edge Function` admin | Lovable Edge Functions no accesibles desde localhost — solo desde Lovable Cloud | `frontend/lib/admin.js` |
+| E24 | `Method Not Allowed 405` en formulario de contacto | Landing.jsx llamaba `supabase.functions.invoke('send-contact')` que no existe localmente | `frontend/components/Landing.jsx` |
+| E25 | Consola admin cuelga al asignar código | Email vía Resend bloqueaba respuesta HTTP (timeout 15s en el event loop) | `backend/api/admin.py` |
+| E26 | `Client error 400` en `/api/admin/data` | Columna `contact_submissions` se llama `codigo_asignado`, no `assigned_code` | `backend/api/admin.py` |
+| E27 | Login admin `Error 500` — `400 Bad Request` Supabase | Columna `Estado` en realidad es `estado` (minúscula); contraseña es hash bcrypt | `backend/api/admin.py` |
+| E28 | Preguntas de entrevista aparecen duplicadas | Bubble mostraba texto completo + formulario al mismo tiempo | `frontend/components/ChatPanel.jsx` |
+| E29 | Punto 10 resumen mezcla correo y portada | `ANSWER_SUMMARY_PROMPT` tenía `10. Contacto y portada` en lugar de Q10/Q11 separados | `backend/agents/architect.py` |
+| E30 | `onReset` en CompletionCard no redirige a `/acceso` | `ChatPanel` recibía `onReset={reset}` en lugar de `onReset={handleReset}` | `frontend/components/StudioApp.jsx` |
 
 ---
 
@@ -381,6 +392,108 @@ if seen_text or image_counter > 1:
 **SSL corporativo:** `truststore.inject_into_ssl()` en `main_api.py` — se aplica antes de cualquier llamada a la API.  
 **Marcadores en Publisher prompt:** `[IMAGE_PROMPT]...[/IMAGE_PROMPT]` (antes eran `[IDEOGRAM_PROMPT]`).  
 **Función pública:** `generate_cover(...)` — alias `generate_cover_with_ideogram` disponible por compatibilidad.
+
+---
+
+---
+
+### E20 — `process is not defined` en consola admin
+
+**Síntoma:** Al navegar a `/admin/solicitudes` la app explota con `process is not defined`.
+**Causa:** `integrations/supabase/client.ts` usaba `process.env.SUPABASE_URL` como fallback para SSR. Vite (browser) no expone `process`.
+**Archivo:** `frontend/src/integrations/supabase/client.ts`
+**Fix:** Eliminar los fallbacks `process.env.*` — solo usar `import.meta.env.VITE_*`.
+
+---
+
+### E21 — `Reflect.get called on non-object`
+
+**Síntoma:** Error en runtime al acceder al cliente Supabase.
+**Causa:** El Proxy de Supabase llama `Reflect.get(_supabase, prop)` pero `_supabase` es `null` cuando las variables de entorno no están configuradas.
+**Archivo:** `frontend/src/integrations/supabase/client.ts`
+**Fix:** Agregar guarda `if (!_supabase) return undefined;` en el getter del Proxy.
+
+---
+
+### E22 — Variables `VITE_*` no disponibles en Vite
+
+**Síntoma:** `import.meta.env.VITE_SUPABASE_URL` es `undefined` aunque la variable está en `.env`.
+**Causa:** Vite lee `.env` desde el directorio raíz del proyecto frontend (`book-factory/frontend/`), pero el archivo `.env` está en `book-factory/`.
+**Archivo:** `frontend/vite.config.js`
+**Fix:** Agregar `envDir: '../'` en `vite.config.js` para que Vite lea desde `book-factory/`.
+
+---
+
+### E23 — `Failed to send a request to the Edge Function`
+
+**Síntoma:** La consola admin no puede hacer login ni cargar datos.
+**Causa:** Las Edge Functions de Lovable (`admin-login`, `admin-data`, etc.) solo existen en Lovable Cloud. No son accesibles desde localhost.
+**Fix:** Reimplementar endpoints admin en FastAPI propio (`/api/admin/*`). Actualizar `admin.js` para llamar al backend en lugar de `supabase.functions.invoke()`.
+
+---
+
+### E24 — `Method Not Allowed 405` en formulario de contacto
+
+**Síntoma:** Al enviar el formulario de contacto de la Landing page, el servidor responde 405.
+**Causa:** `Landing.jsx` llamaba `supabase.functions.invoke('send-contact')` — Edge Function de Lovable que no existe localmente.
+**Archivo:** `frontend/src/components/Landing.jsx`
+**Fix:** Reemplazar por `fetch('/api/invites/request', ...)` que llama al backend FastAPI propio.
+
+---
+
+### E25 — Consola admin cuelga al asignar código
+
+**Síntoma:** Al hacer click en "Asignar código", la pantalla se queda colgada durante ~15 segundos.
+**Causa:** El envío de correo vía Resend API bloqueaba el event loop de asyncio — la llamada httpx tardaba el timeout completo (15s) en el contexto de la respuesta HTTP.
+**Archivo:** `backend/api/admin.py`, `backend/api/app.py`
+**Fix:** Mover el envío de correo a `BackgroundTasks` de FastAPI. La respuesta HTTP se retorna inmediatamente tras actualizar Supabase; el correo se envía después en background.
+
+---
+
+### E26 — `Client error 400` en `/api/admin/data`
+
+**Síntoma:** La consola admin carga el login pero falla al cargar datos con error 400 de Supabase.
+**Causa:** El campo de la tabla `contact_submissions` se llama `codigo_asignado` pero el código usaba `assigned_code`.
+**Archivo:** `backend/api/admin.py`
+**Fix:** Corregir a `codigo_asignado` en `select` y en el `PATCH` de asignación. También actualizar `AdminConsole.jsx` que referenciaba `s.assigned_code`.
+
+---
+
+### E27 — Login admin `Error 500` — columna `Estado` y contraseña bcrypt
+
+**Síntoma:** Al intentar login admin, el backend responde 500. El log muestra `400 Bad Request` de Supabase.
+**Causas (dos):**
+1. Columna es `estado` (minúscula), no `Estado` — PostgREST es case-sensitive.
+2. La contraseña en Supabase está hasheada con bcrypt (`$2a$10$...`), no en texto plano.
+**Archivo:** `backend/api/admin.py`
+**Fix:** Usar `"estado": "eq.Activo"` (minúscula) en el filtro. Importar `bcrypt` y verificar con `bcrypt.checkpw(contrasena.encode(), hash.encode())`.
+
+---
+
+### E28 — Preguntas de entrevista aparecen duplicadas
+
+**Síntoma:** Al llegar al interrupt de entrevista, aparece el texto completo de las preguntas en un bubble de chat Y luego el formulario debajo — doble visualización.
+**Causa:** `ChatPanel.jsx` renderizaba el `MessageBubble` con el contenido completo (intro + preguntas) y además mostraba `InterviewForm`.
+**Archivo:** `frontend/src/components/ChatPanel.jsx`
+**Fix:** Para mensajes `interrupt_type === 'interview'` con `questions` estructuradas, usar `extractInterviewIntro()` para mostrar solo el texto introductorio antes de la primera pregunta `**1.`.
+
+---
+
+### E29 — Punto 10 del resumen mezcla correo y portada
+
+**Síntoma:** En el resumen de confirmación de respuestas, el ítem 10 dice "Contacto y portada" combinando dos campos distintos.
+**Causa:** `ANSWER_SUMMARY_PROMPT` tenía hardcodeado `10. **Contacto y portada:**`.
+**Archivo:** `backend/agents/architect.py`
+**Fix:** Separar en `10. **Correo de contacto:**` y `11. **Preferencias de portada:**`. Actualizar también la INTERVIEW_PROMPT para que genere Q10 y Q11 como preguntas independientes.
+
+---
+
+### E30 — `onReset` en CompletionCard no redirige a `/acceso`
+
+**Síntoma:** Al hacer click en "← Crear otro libro", el estado se limpia pero el usuario se queda en `/studio` (StartScreen) en lugar de volver al gate de acceso.
+**Causa:** `StudioApp.jsx` pasaba `onReset={reset}` a `ChatPanel` en lugar de `onReset={handleReset}`. `reset()` limpia el estado pero no navega; `handleReset()` llama `reset()` + `navigate('/acceso')`.
+**Archivo:** `frontend/src/components/StudioApp.jsx`
+**Fix:** Cambiar a `onReset={handleReset}`.
 
 ---
 
