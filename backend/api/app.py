@@ -11,7 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, UploadFile, File, HTTPException, Request, Query
+from fastapi import FastAPI, WebSocket, UploadFile, File, HTTPException, Request, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -152,7 +152,7 @@ def create_app() -> FastAPI:
 
     # -- Solicitud de acceso → guarda en contact_submissions (Supabase) -------
     @app.post("/api/invites/request")
-    async def request_invite(request: Request):
+    async def request_invite(request: Request, background_tasks: BackgroundTasks):
         """
         Recibe solicitud de acceso al estudio (nombre, email, idea del libro).
         Persiste en la tabla contact_submissions de Supabase para revisión del admin.
@@ -206,43 +206,10 @@ def create_app() -> FastAPI:
             logging.getLogger("book-factory").error(f"[Contact] Error al guardar solicitud: {e}")
             raise HTTPException(status_code=500, detail="No se pudo guardar la solicitud. Intenta de nuevo.")
 
-        # Enviar correo de confirmación al solicitante (best-effort)
-        resend_key = os.getenv("RESEND_API_KEY", "")
-        if resend_key:
-            try:
-                html_confirm = f"""<!doctype html>
-<html lang="es">
-  <body style="margin:0;padding:24px;background:#f5f5f4;font-family:Helvetica,Arial,sans-serif;color:#1c1917;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
-           style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e7e5e4;border-radius:12px;">
-      <tr><td style="padding:28px 28px 8px;">
-        <p style="font-size:12px;letter-spacing:0.2em;text-transform:uppercase;color:#a8a29e;margin:0 0 8px;">Editorial OBRA</p>
-        <h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 16px;color:#0c0a09;">Hola {name},</h1>
-        <p style="font-size:15px;line-height:1.55;margin:0 0 16px;">
-          Hemos recibido tu solicitud de acceso al estudio. La revisaremos pronto y te enviaremos
-          tu código de invitación a este mismo correo.
-        </p>
-        <p style="font-size:14px;color:#57534e;margin:0;">Te saluda atentamente,<br/><strong>Alfred</strong></p>
-      </td></tr>
-    </table>
-  </body>
-</html>"""
-                httpx.post(
-                    "https://api.resend.com/emails",
-                    headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
-                    json={
-                        "from":    "Editorial OBRA <onboarding@resend.dev>",
-                        "to":      [email],
-                        "subject": "Recibimos tu solicitud — Editorial OBRA",
-                        "html":    html_confirm,
-                        "text":    f"Hola {name},\n\nHemos recibido tu solicitud. Te enviaremos tu código de acceso pronto.\n\nAlfred",
-                    },
-                    timeout=10,
-                    verify=ssl_ctx,
-                )
-            except Exception:
-                pass  # El guardado ya fue exitoso; el correo falla silenciosamente
-
+        # Enviar correo de confirmación en background (no bloquea la respuesta)
+        background_tasks.add_task(
+            admin_module.send_confirmation_email, name, email, ssl_ctx
+        )
         return {"ok": True}
 
     # -- Verificación de código de invitación (Supabase) ----------------------
@@ -468,11 +435,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/api/admin/assign")
-    async def admin_assign(request: Request):
+    async def admin_assign(request: Request, background_tasks: BackgroundTasks):
         _get_admin_token(request)
         try:
             body = await request.json()
-            return await admin_module.handle_assign(body)
+            return await admin_module.handle_assign(body, background_tasks)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:

@@ -159,7 +159,7 @@ async def handle_data(token_entry: dict) -> dict:
 
 # ── Asignar código ────────────────────────────────────────────────────────────
 
-async def handle_assign(body: dict) -> dict:
+async def handle_assign(body: dict, background_tasks=None) -> dict:
     submission_id = body.get("submission_id")
     code_id       = body.get("code_id")
     if not submission_id or not code_id:
@@ -209,14 +209,22 @@ async def handle_assign(body: dict) -> dict:
             json={"status": "asignado", "codigo_asignado": code_val},
         )
 
-    # Enviar correo via Resend
-    email_result = await _send_assignment_email(
-        name=submission.get("name", ""),
-        email=submission["email"],
-        code=code_val,
-    )
+    # Enviar correo en background — no bloquea la respuesta al admin
+    if background_tasks is not None:
+        background_tasks.add_task(
+            _send_assignment_email_sync,
+            name=submission.get("name", ""),
+            email=submission["email"],
+            code=code_val,
+        )
+    else:
+        await _send_assignment_email(
+            name=submission.get("name", ""),
+            email=submission["email"],
+            code=code_val,
+        )
 
-    return {"code": code_val, **email_result}
+    return {"code": code_val, "email_sent": True}
 
 
 async def _send_assignment_email(name: str, email: str, code: str) -> dict:
@@ -283,6 +291,56 @@ async def _send_assignment_email(name: str, email: str, code: str) -> dict:
     except Exception as e:
         logger.exception("[Admin] Error de red al enviar correo")
         return {"email_sent": False, "email_error_reason": "network_error", "email_error": str(e)}
+
+
+def _send_assignment_email_sync(name: str, email: str, code: str) -> None:
+    """Versión síncrona para BackgroundTasks — no bloquea el event loop."""
+    import asyncio
+    try:
+        asyncio.run(_send_assignment_email(name, email, code))
+    except Exception:
+        logger.exception("[Admin] Error en background al enviar correo de asignación")
+
+
+def send_confirmation_email(name: str, email: str, ssl_ctx) -> None:
+    """Correo de confirmación de recepción de solicitud — síncrono para BackgroundTasks."""
+    api_key = os.getenv("RESEND_API_KEY", "")
+    if not api_key or not email:
+        return
+    html = f"""<!doctype html>
+<html lang="es">
+  <body style="margin:0;padding:24px;background:#f5f5f4;font-family:Helvetica,Arial,sans-serif;color:#1c1917;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+           style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e7e5e4;border-radius:12px;">
+      <tr><td style="padding:28px 28px 8px;">
+        <p style="font-size:12px;letter-spacing:0.2em;text-transform:uppercase;color:#a8a29e;margin:0 0 8px;">Editorial OBRA</p>
+        <h1 style="font-family:Georgia,serif;font-size:22px;margin:0 0 16px;color:#0c0a09;">Hola {name},</h1>
+        <p style="font-size:15px;line-height:1.55;margin:0 0 16px;">
+          Hemos recibido tu solicitud de acceso al estudio. La revisaremos pronto
+          y te enviaremos tu código de invitación a este mismo correo.
+        </p>
+        <p style="font-size:14px;color:#57534e;margin:0;">Te saluda atentamente,<br/><strong>Alfred</strong></p>
+      </td></tr>
+    </table>
+  </body>
+</html>"""
+    try:
+        httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "from":    "Editorial OBRA <onboarding@resend.dev>",
+                "to":      [email],
+                "subject": "Recibimos tu solicitud — Editorial OBRA",
+                "html":    html,
+                "text":    f"Hola {name},\n\nHemos recibido tu solicitud. Te enviaremos tu código de acceso pronto.\n\nAlfred",
+            },
+            timeout=10,
+            verify=ssl_ctx,
+        )
+        logger.info(f"[Contact] Confirmación enviada a {email}")
+    except Exception:
+        logger.exception("[Contact] Error al enviar confirmación")
 
 
 # ── Generar códigos ───────────────────────────────────────────────────────────
