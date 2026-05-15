@@ -213,8 +213,8 @@ export default function AdminConsole() {
                         <span className="inline-flex items-center gap-2 text-xs">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                           <span className="text-emerald-300">Asignado</span>
-                          {s.assigned_code && (
-                            <span className="text-stone-500 font-mono">{s.assigned_code}</span>
+                          {s.codigo_asignado && (
+                            <span className="text-stone-500 font-mono">{s.codigo_asignado}</span>
                           )}
                         </span>
                       ) : (

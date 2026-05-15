@@ -122,7 +122,7 @@ async def handle_data(token_entry: dict) -> dict:
         r_sub = await client.get(
             _supa_url("contact_submissions"),
             headers=_supa_headers(),
-            params={"select": "id,name,email,idea,created_at,status,assigned_code",
+            params={"select": "id,name,email,idea,created_at,status,codigo_asignado",
                     "order": "created_at.desc"},
         )
         r_sub.raise_for_status()
@@ -206,7 +206,7 @@ async def handle_assign(body: dict) -> dict:
             _supa_url("contact_submissions"),
             headers=_supa_headers(),
             params={"id": f"eq.{submission_id}"},
-            json={"status": "asignado", "assigned_code": code_val},
+            json={"status": "asignado", "codigo_asignado": code_val},
         )
 
     # Enviar correo via Resend
