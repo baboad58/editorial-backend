@@ -9,6 +9,7 @@ import {
   getAdminUser,
 } from '../lib/admin'
 import { buildAssignmentEmail } from '../lib/emailTemplate'
+import { SUPABASE_CONFIGURED } from '../integrations/supabase/client'
 
 function fmtDate(s) {
   if (!s) return '—'
@@ -18,6 +19,26 @@ function fmtDate(s) {
 
 export default function AdminConsole() {
   const navigate = useNavigate()
+
+  if (!SUPABASE_CONFIGURED) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] text-stone-100 flex items-center justify-center px-6">
+        <div className="max-w-md text-center space-y-4">
+          <p className="text-3xl">🔒</p>
+          <h1 className="font-serif text-2xl text-stone-200">Consola Admin</h1>
+          <p className="text-sm text-stone-400 leading-relaxed">
+            Esta consola requiere las credenciales de Supabase de Lovable Cloud.<br />
+            Agrega <code className="text-gold-400">VITE_SUPABASE_URL</code> y{' '}
+            <code className="text-gold-400">VITE_SUPABASE_PUBLISHABLE_KEY</code> al archivo <code>.env</code>.
+          </p>
+          <button onClick={() => navigate('/')} className="text-xs text-stone-500 hover:text-stone-300 underline">
+            ← Volver
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [submissions, setSubmissions] = useState([])
