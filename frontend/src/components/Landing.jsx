@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { supabase } from '../integrations/supabase/client'
 import heroImg from '../assets/hero-library.jpg'
 import AdminLoginModal from './AdminLoginModal'
+
+const API_BASE = import.meta.env.VITE_API_URL || ''
 
 const STEPS = [
   {
@@ -220,15 +221,17 @@ function ContactCTA() {
 
     setSubmitting(true)
     try {
-      const { data, error } = await supabase.functions.invoke('send-contact', { body: payload })
-      if (error || data?.error) {
-        const msg = data?.error || error?.message || ''
-        console.error('send-contact failed:', error || data?.error)
-        if (/429|demasiadas/i.test(msg)) {
-          setSubmitError('Has enviado demasiadas solicitudes. Inténtalo de nuevo en una hora.')
-        } else {
-          setSubmitError('No hemos podido registrar tu solicitud. Inténtalo de nuevo en unos minutos.')
-        }
+      const res = await fetch(`${API_BASE}/api/invites/request`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      })
+      if (res.status === 429) {
+        setSubmitError('Has enviado demasiadas solicitudes. Inténtalo de nuevo en una hora.')
+        return
+      }
+      if (!res.ok) {
+        setSubmitError('No hemos podido registrar tu solicitud. Inténtalo de nuevo en unos minutos.')
         return
       }
       setSent(true)
