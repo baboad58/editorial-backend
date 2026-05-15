@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 from backend.api.websocket import book_websocket_handler
 from backend.api.session import session_manager
 from backend.api.invites_db import verify_invite, mark_used
+from backend.api import admin as admin_module
 
 # ── Rate limiters in-memory ───────────────────────────────────────────────────
 _invite_attempts:  dict[str, list[float]] = defaultdict(list)
@@ -397,6 +398,55 @@ def create_app() -> FastAPI:
             return result
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # -- Admin endpoints -------------------------------------------------------
+    @app.post("/api/admin/login")
+    async def admin_login(request: Request):
+        try:
+            body = await request.json()
+            result = await admin_module.handle_login(body)
+            return result
+        except PermissionError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    def _get_admin_token(request: Request) -> dict:
+        auth = request.headers.get("Authorization", "")
+        token = auth.removeprefix("Bearer ").strip()
+        entry = admin_module.verify_admin_token(token)
+        if not entry:
+            raise HTTPException(status_code=401, detail="Token inválido o expirado.")
+        return entry
+
+    @app.get("/api/admin/data")
+    async def admin_data(request: Request):
+        entry = _get_admin_token(request)
+        try:
+            return await admin_module.handle_data(entry)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/admin/assign")
+    async def admin_assign(request: Request):
+        _get_admin_token(request)
+        try:
+            body = await request.json()
+            return await admin_module.handle_assign(body)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/admin/generate-codes")
+    async def admin_generate_codes(request: Request):
+        _get_admin_token(request)
+        try:
+            body = await request.json()
+            count = int(body.get("count", 10))
+            return await admin_module.handle_generate_codes(count)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
