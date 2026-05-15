@@ -184,15 +184,19 @@ PREGUNTAS DEL AUTOR (incluir siempre al final, para todos los géneros):
 ¿Cuál es tu formación, experiencia y enfoque profesional? (Estos datos se usarán para la sección
 "Sobre el Autor" y la página legal — mientras más detalle, mejor resultado)
 
-**10. Datos de contacto y portada**
-¿Cuál es tu correo de contacto para los derechos del libro? ¿Tienes alguna preferencia de color,
-estilo o imagen para la portada? (ambos opcionales)
+**10. Correo de contacto**
+¿Cuál es tu correo electrónico de contacto? Se usará para los derechos del libro y la página legal.
+(Opcional)
+
+**11. Preferencias de portada**
+¿Tienes alguna preferencia de color, estilo o imagen para la portada?
+(Opcional — si no tienes preferencia, el equipo editorial elegirá según el género y tono del libro.)
 
 INSTRUCCIONES DE FORMATO:
 - Presenta las preguntas en su propia línea, con una línea en blanco entre cada una.
-- Usa exactamente el formato **N. Título** seguido de la pregunta.
+- Usa exactamente el formato **N. Título** seguido de la pregunta en la línea siguiente.
 - Al inicio escribe una línea mencionando el género que detectaste y por qué.
-- Las preguntas del autor (8, 9, 10) van siempre al final, separadas por una línea:
+- Las preguntas del autor (8, 9, 10, 11) van siempre al final, separadas por una línea:
   "--- Datos para la publicación ---"
 - Empieza con: "¡Excelente idea! Veo que estás trabajando en [género detectado]. Permíteme hacerte algunas preguntas para diseñar tu libro perfectamente."
 """
@@ -554,6 +558,27 @@ def _is_interview_confirmed(raw: str) -> bool:
     return any(lower.startswith(w) for w in _CONFIRM_WORDS)
 
 
+def _parse_interview_questions(text: str) -> list:
+    """
+    Parsea el texto de entrevista del LLM y extrae lista estructurada de preguntas.
+    Formato esperado: **N. Título**\nTexto de la pregunta
+    Retorna: [{"id": N, "titulo": str, "pregunta": str}, ...]
+    """
+    import re
+    questions = []
+    # Detectar bloques: **N. Título** seguido de texto
+    pattern = re.compile(r'\*\*(\d+)\.\s+([^*\n]+)\*\*\s*\n(.*?)(?=\n\s*\n\*\*\d+\.|\Z)', re.DOTALL)
+    for m in pattern.finditer(text):
+        num    = int(m.group(1))
+        titulo = m.group(2).strip()
+        preg   = m.group(3).strip()
+        # Limpiar líneas del separador como "--- Datos para la publicación ---"
+        preg = re.sub(r'^---.*?---\s*', '', preg, flags=re.MULTILINE).strip()
+        if titulo and preg:
+            questions.append({"id": num, "titulo": titulo, "pregunta": preg})
+    return questions
+
+
 def _format_interview_summary(llm, idea: str, interview_content: str, user_answers: str) -> str:
     """Llama al LLM para formatear las respuestas como resumen numerado confirmable."""
     msg = retry_llm_call(
@@ -655,10 +680,11 @@ def architect_node(state: BookState) -> dict:
         )
 
         user_answers = interrupt({
-            "type": "interview",
-            "agent": "Arquitecto",
-            "content": interview_msg.content,
-            "hint": "Responde todas las preguntas del arquitecto en un solo mensaje.",
+            "type":      "interview",
+            "agent":     "Arquitecto",
+            "content":   interview_msg.content,
+            "questions": _parse_interview_questions(interview_msg.content),
+            "hint":      "Responde todas las preguntas del arquitecto.",
         })
 
         # ── Interrupt 2: Loop de confirmación de respuestas ───────────────

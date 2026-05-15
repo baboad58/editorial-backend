@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Send } from 'lucide-react'
 import ChapterDraftView from './ChapterDraftView'
 import PlanView from './PlanView'
+import InterviewForm from './InterviewForm'
 
 const AGENT_COLORS = {
   Arquitecto: 'text-blue-400',
@@ -126,7 +127,10 @@ export default function ChatPanel({ messages, currentInterrupt, phase, onSend, r
   }
 
   const isChapterReviewActive = currentInterrupt?.interrupt_type === 'chapter_review'
-  const canInput = currentInterrupt && phase === 'active' && !isChapterReviewActive
+  const isInterviewForm = currentInterrupt?.interrupt_type === 'interview'
+                          && Array.isArray(currentInterrupt?.data?.questions)
+                          && currentInterrupt.data.questions.length > 0
+  const canInput = currentInterrupt && phase === 'active' && !isChapterReviewActive && !isInterviewForm
   const quickOptions = getQuickOptions(currentInterrupt)
   const showButtons = canInput && quickOptions && !customMode
   const showTextInput = canInput && (!quickOptions || customMode)
@@ -166,8 +170,23 @@ export default function ChatPanel({ messages, currentInterrupt, phase, onSend, r
         <div ref={bottomRef} />
       </div>
 
+      {/* Interview form — se muestra en lugar del input cuando el interrupt tiene preguntas estructuradas */}
+      {isInterviewForm && (
+        <div className="border-t border-white/10 px-6 py-4 overflow-y-auto max-h-[60vh]">
+          <p className="text-xs text-gray-500 mb-3">
+            Completa todas las preguntas y presiona <strong className="text-gray-400">Enviar respuestas</strong>.
+            Los campos opcionales pueden dejarse en blanco.
+          </p>
+          <InterviewForm
+            questions={currentInterrupt.data.questions}
+            onSend={(formatted) => { handleSend(formatted) }}
+            disabled={phase !== 'active'}
+          />
+        </div>
+      )}
+
       {/* Input area */}
-      {!isChapterReviewActive && (
+      {!isChapterReviewActive && !isInterviewForm && (
         <div className="border-t border-white/10 px-6 py-4">
           {/* Quick-option buttons */}
           {showButtons && (
@@ -245,7 +264,7 @@ export default function ChatPanel({ messages, currentInterrupt, phase, onSend, r
           )}
 
           {/* Waiting state — no interrupt active */}
-          {!canInput && !isChapterReviewActive && phase === 'active' && (
+          {!canInput && !isChapterReviewActive && !isInterviewForm && phase === 'active' && (
             <p className="text-xs text-gray-600 text-center py-2">Los agentes están trabajando…</p>
           )}
         </div>
