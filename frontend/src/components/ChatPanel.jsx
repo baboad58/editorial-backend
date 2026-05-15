@@ -159,6 +159,11 @@ export default function ChatPanel({ messages, currentInterrupt, phase, onSend, r
           if (msg.role === 'agent' && msg.interrupt_type === 'plan_approval') {
             return <PlanView key={msg.id} msg={msg} />
           }
+          // Entrevista con formulario: mostrar solo la frase intro, no las preguntas
+          if (msg.role === 'agent' && msg.interrupt_type === 'interview' && msg.raw?.questions?.length > 0) {
+            const intro = extractInterviewIntro(msg.content)
+            return <MessageBubble key={msg.id} msg={{ ...msg, content: intro }} />
+          }
           return <MessageBubble key={msg.id} msg={msg} />
         })}
 
@@ -366,6 +371,14 @@ function CompletionCard({ result, onReset }) {
       </div>
     </div>
   )
+}
+
+function extractInterviewIntro(content) {
+  if (!content) return content
+  // Tomar solo el texto antes de la primera pregunta "**1." o del separador "---"
+  const cutIdx = content.search(/\*\*1\.|^---/m)
+  if (cutIdx > 0) return content.slice(0, cutIdx).trim()
+  return content
 }
 
 function getHint(interrupt) {

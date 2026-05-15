@@ -270,7 +270,7 @@ Idea original: "{idea}"
 Preguntas del arquitecto: {interview_content}
 Respuestas del usuario: {user_answers}
 
-Genera un resumen numerado EXACTO de las 10 respuestas. Usa el siguiente formato sin variaciones:
+Genera un resumen numerado EXACTO de las 11 respuestas. Usa el siguiente formato sin variaciones:
 
 **📋 Resumen de respuestas — confirma antes de continuar:**
 
@@ -283,12 +283,13 @@ Genera un resumen numerado EXACTO de las 10 respuestas. Usa el siguiente formato
 7. **[Pregunta 7 del género]:** [respuesta concreta, o "No especificado ⚠️"]
 8. **Nombre del autor:** [respuesta concreta, o "No especificado ⚠️"]
 9. **Sobre el autor:** [respuesta concreta, o "No especificado ⚠️"]
-10. **Contacto y portada:** [respuesta concreta, o "No especificado"]
+10. **Correo de contacto:** [respuesta concreta, o "No especificado"]
+11. **Preferencias de portada:** [respuesta concreta, o "No especificado"]
 
 Reglas:
 - Marca con ⚠️ los ítems críticos que no fueron respondidos (1 al 9).
 - Ítem 4 SIEMPRE debe aclarar que el libro citado es solo inspiración de estilo.
-- Ítem 10 sin ⚠️ (es opcional).
+- Ítems 10 y 11 sin ⚠️ (son opcionales).
 - Si el usuario mezcló respuestas, infiere cuál corresponde a cada pregunta.
 
 Termina SIEMPRE con este bloque exacto (sin modificarlo):
